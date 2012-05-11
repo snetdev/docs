@@ -114,7 +114,7 @@ We introduce the following declaration in ``langif.h``:
 
 .. code:: c
 
-   typedef ... dispatcher_t;
+   typedef ... dispatch_t;
 
    // proposed logging levels
    #define  LOG_NOTSET   0
@@ -125,10 +125,10 @@ We introduce the following declaration in ``langif.h``:
    #define  LOG_FATAL    50   // unexpected condition, behavior undefined
  
    /* API accessors */
-   int svp_log(dispatcher_t*, int, const char*, ...);
+   int svp_log(dispatch_t*, int, const char*, ...);
 
 The logging function reports messages on a logging channel specific to
-the context where it is called (identified via ``dispatcher_t``).
+the context where it is called (identified via ``dispatch_t``).
 
 For example, a box function with type ``{<a>} -> {<x>,<y>,<z>}`` could
 be written so:
@@ -136,7 +136,7 @@ be written so:
 .. code:: c
 
    /* box signature:  {<a>} -> {} */
-   int testbox(dispatcher_t* cb,  tagval_t a)
+   int testbox(dispatch_t* cb,  tagval_t a)
    {
       svp_log(cb, LOG_INFO, "textbox received %d", a);
 
@@ -154,17 +154,17 @@ We introduce the following:
 .. code:: c
 
    // out: emit one output record.
-   int svp_out(dispatcher_t* hnd, ...);
+   int svp_out(dispatch_t* hnd, ...);
 
 Each call to the output function produces one record on the default
-output stream associated with the context (identified via ``dispatcher_t``).
+output stream associated with the context (identified via ``dispatch_t``).
    
 For example, a box function with type ``{<a>} -> {<x>,<y>,<z>}``
 could be written so:
 
 .. code:: c
 
-   int testbox(dispatcher_t* cb,  tagval_t a)
+   int testbox(dispatch_t* cb,  tagval_t a)
    {
       svp_log(cb, LOG_INFO, "textbox received %d", a);
       
@@ -191,10 +191,10 @@ We introduce the following in ``langif.h``:
    typedef ... typeid_t;
  
    // access: retrieve a pointer to the actual data.
-   int svp_access(dispatcher_t*, fieldref_t theref, void **ptr);
+   int svp_access(dispatch_t*, fieldref_t theref, void **ptr);
 
    // getmd: retrieve field metadata.
-   int svp_getmd (dispatcher_t*, fieldref_t theref, 
+   int svp_getmd (dispatch_t*, fieldref_t theref, 
                   size_t *thesize, typeid_t *thetype, size_t *realsize);
 
 Semantics:
@@ -237,7 +237,7 @@ For example:
 .. code:: c
 
    /* box signature: {string} -> {<t>}  */
-   int testfirstnul(dispatcher_t* cb, fieldref_t f)
+   int testfirstnul(dispatch_t* cb, fieldref_t f)
    {
         /* the box tests tests if the first byte of its input
            field is not ASCI NUL (``'\0'``). If the input
@@ -269,7 +269,7 @@ The field database maps integer values of type ``fieldref_t`` to
 managed objects in memory.
 
 The field database is only visible from box/control entity code using
-the two ``dispatcher_t``-based APIs, LMA and EMA, documented below. 
+the two ``dispatch_t``-based APIs, LMA and EMA, documented below. 
 
 Another API will be described separately for monitoring/analysis code
 which wants to tracks how many fields are currently allocated, who has
@@ -282,7 +282,7 @@ We provide the following:
 
 .. code:: c
 
-   fieldref_t  svp_copyref(dispatcher_t* cb, fieldref_t r);
+   fieldref_t  svp_copyref(dispatch_t* cb, fieldref_t r);
  
 For each call to ``copyref``, ``release`` must be called on the
 returned reference.
@@ -491,242 +491,24 @@ predefined, to be used with the EMA:
 
 All these types serialize and deserialize to themselves.
 
-Discussion about field ownership
---------------------------------
-
-There is a discussion about who is responsible for releasing
-references manipulated by boxes, in case the EMA is used.
-
-There are two questions that need answering:
-
-1. who releases the field references that a box gets as input?
-
-   Two options:
-  
-   a. the box itself, before it terminates.
-   b. the environment, automatically after the box terminates.
-
-2. who releases the field references that a box creates
-   during its execution?
-
-   Three options:
-
-   a. the box itself, after it sends it via out().
-   b. the out() function.
-   c. the environment, automatically after the box terminates.
-
-Analysis
-````````
-
-We analyze the different scenarios using the "traditional" implementation where
-newly created references have count 1.
-
-About 1a: yields memory leaks if the programmer forgets to call ``release``.
-
-About 1b: yields a potential wasted opportunity in long-running boxes
-with the following structure:
-
-.. code:: c
-  
-   // signature: {bytes} -> {<x>, bytes}
-   int examplebox(dispatcher_t* cb,  fieldref_t  x)
-   {
-      // this box outputs its input record with tag 0,
-      // then 1000 fresh records with tag 1.
-      svp_out(cb, 0, x);
-
-      for (int i = 0; i < 1000; ++i)
-      { 
-           fieldref_t f = svp_new(cb, 1, BYTES_UNALIGNED);
-           svp_out(cb, 1, f);
-      }
-      return 0;
-   }
-
-When this box runs, the memory for the input field ``x`` will remain
-allocated for the entire duration of the box' execution, even though
-it is not needed after the initial "out".
-
-
-About 2a: yields memory leaks if the code forgets to call ``release``.
-
-About 2b: creates a problem if a box wants to output multiple
-references to the same field data. For example:
-
-.. code:: c
-
-   // signature: {bytes} -> {bytes}
-   int examplebox(dispatcher_t* cb,  fieldref_t  x)
-   {
-      for (int i = 0; i < 1000; ++i)
-           svp_out(cb, x);
-
-      return 0;
-   }
-
-This code is invalid: if ``out`` calls ``release``, then after the
-first iteration the reference ``x`` would not be valid any more.
-
-About 2c: like 1b above, is inefficient when a long-running box
-allocates many objects but only outputs each reference a few times. For example:
-
-.. code:: c
-
-   // signature: {<tag>} -> {bytes}
-   int examplebox(dispatcher_t* cb,  tagval_t tag)
-   {
-      for (int i = 0; i < 1000; ++i)
-      { 
-           fieldref_t f = svp_new(cb, 1, BYTES_UNALIGNED);
-           svp_out(cb, f);
-      }
-      return 0;
-   }
-
-In this box, it would be inefficient if the environment waits until
-the end before it releases the allocated objects. Also it would create
-a memory leak if the box is modified so that the loop never
-terminates.
-
-Solution
-````````
-
-We do this as follows:
-
-- upon entry into a box function:
-
-  - the field reference counter is *decreased without deallocation*
-    immediately prior to entry; this may result in a ref count 0 but
-    the data is not deallocated.
-
-  - if the ref count becomes 0, the reference is also placed on a
-    "clean up" list attached to the box activation.
-
-  - when the box function terminates, the environment walks through
-    the clean up list and simply frees the data associated with all
-    the references on the list.
-
-- each new reference creation by a box instance (eg. ``new``, ``wrap``
-  in LMA) will set the reference count to 0 and cause the environment
-  to store the reference to the newly allocated object in the "clean
-  up" list.
-
-- when ``copyref`` is called on a reference count with value 0, it
-  increases the counter to 1 and it also removes the reference from
-  its context's clean-up list.
-
-- upon entry, ``out`` calls ``copyref``:
-
-  - if the ref count was 0 upon entry, this takes ownership: the last
-    subsequent ``release`` as part of ``out``'s continuation will
-    deallocate the field data. After ``out`` returns, the reference is
-    not valid any more.
-
-  - if the ref count was 1 or greater upon entry, ``out`` does not
-    take ownership: when ``out`` returns, the reference is still
-    valid.
-
-- if the box code explicitly calls ``release`` on a
-  reference, ``release`` will do its work and
-  also remove the reference from the clean up list.
-
-Not that the maintained invariant is that a reference is on the clean
-up list if and only if its reference counter becomes 0 but the data is
-still allocated. 
-
-We illustrate with two examples. The first creates 1000 different
-fields:
-
-.. code:: c
-
-   // signature: {<tag>} -> {bytes}
-   int examplebox(dispatcher_t* cb,  tagval_t tag)
-   {
-      for (int i = 0; i < 1000; ++i)
-      { 
-           fieldref_t f = svp_new(cb, 1, BYTES_UNALIGNED);
-           svp_out(cb, f);
-      }
-
-      return 0; 
-   }
-
-At every iteration of the loop ``new`` creates a new reference with
-count 0.  Then ``out`` increase the count to 1 and removes the
-reference from the clean-up list. All the 1000 fields are deallocated
-as part of ``out`` 's continuation; the references are not valid when
-``out`` returns.
-
-The second example outputs the same input field 1000 times:
-
-.. code:: c
-
-   // signature: {bytes} -> {bytes}
-   int examplebox(dispatcher_t* cb,  fieldref_t  x)
-   {
-      x = svp_copyref(cb, x);
-
-      for (int i = 0; i < 1000; ++i)
-           svp_out(cb, x);
-
-      svp_release(cb, x);
-
-      return 0;
-   }
-
-Before the first iteration ``copyref`` increases the counter to 1 and
-thus makes the box function "own" the reference. From that point the
-reference becomes persistent across multiple calls to ``out``. However
-because the box is now owner it must explicitly call release before
-terminating.
-
-
-.. hint:: Implementation detail.
- 
-   If a box takes two fields {A,B} as input, both must be separate
-   entries in the clean up list because:
-   
-   - the box code must be able to call ``release`` explicitly on
-     either
-
-   - if the box code only calls ``release`` on one, the environment
-     must only call ``release`` on the other.
-
-   However in some cases the same object reference x will be passed as
-   two separate inputs to a box function, for example with a box
-   following a filter which creates two conceptual copies of the same
-   field as separate fields in its output record.
-
-   If the clean up list is a linked list using the objects themselves
-   as nodes, a naive implementation would have a problem: there would
-   be only one node on the list when the same object is listed as 2
-   separate arguments of the box.
-
-   So instead each linked list node also stores the number of times
-   the object is listed in the input argument list, which is also
-   the number of times ``release`` must be called on that node when
-   the box ends.
-
-
-
 Usage in box code
 -----------------
 
-For this purpose the ``dispatcher_t`` API is extended as follows:
+For this purpose the ``dispatch_t`` API is extended as follows:
 
 .. code:: c
 
    // new: creates a fresh new object of the specified type and size.
-   fieldref_t svp_new(dispatcher_t*, size_t thesize, typeid_t thetype);
+   fieldref_t svp_new(dispatch_t*, size_t thesize, typeid_t thetype);
  
    // release: drop the specified reference.
-   void svp_release(dispatcher_t*, fieldref_t theref);
+   void svp_release(dispatch_t*, fieldref_t theref);
  
    // resize: modify the logical size of the object.
-   int svp_resize(dispatcher_t*, fieldref_t theref, size_t newsize);
+   int svp_resize(dispatch_t*, fieldref_t theref, size_t newsize);
  
    // clone: create a fresh copy of the data with its own reference
-   void svp_clone(dispatcher_t*, fieldref_t theref);
+   void svp_clone(dispatch_t*, fieldref_t theref);
    
 Semantics:
 
@@ -759,35 +541,6 @@ Semantics:
   This allocates a new object with identical contents and returns the
   reference to the copy. 
 
-  ``clone`` is implemented by calling ``copyref`` then ``release`` on
-  the reference given as input. Although this seems idempotent and
-  thus unnecessary, it has the interesting side effect to allow early
-  deallocation in the following "common" code pattern:
- 
-  .. code:: c
-
-     int boxfunc(dispatch_t* cb,  fieldref_t x)
-     {
-       void *ptr;
-       int rw = svp_access(cb, x, &ptr);
-       if (!rw) {
-           // can't write, so make a copy.
-           x = svp_clone(cb, x);
-           svp_access(cb, x, &ptr);
-       }
-       /* ... use ptr here ... */
-       svp_out(cb, x);
-     }
-
-  In this pattern, if ``x`` arrives in the box with reference count 0,
-  then the ``copyref``/``release`` pair in ``clone`` ensures that its
-  storage is de-allocated "early" during the call to ``clone``. 
-
-  As with ``new`` and ``wrap``, ``clone`` initially sets the field
-  reference counter to 0 and places the newly field reference in the
-  context's clean-up list. See `Discussion about field ownership`_ for
-  details.
-
 ``resize`` : modify the logical size.
 
   When ``new`` has allocated more bytes than requested, the extra
@@ -819,7 +572,7 @@ following code in ``boxes.c``:
    #include "langif.h"
    
    // signature: {<tag>} -> {ll}
-   void t2l(dispatcher_t* cb,  tagval_t tag)
+   void t2l(dispatch_t* cb,  tagval_t tag)
    {
        svp_log(cb, LOG_INFO, "hello from t2l, tag = %d", tag);
  
@@ -840,7 +593,7 @@ record except for the first character which is capitalized:
    #include "langif.h"
 
    // signature: {string} -> {string}
-   int capitalize(dispatcher_t* cb,  fieldref_t  string)
+   int capitalize(dispatch_t* cb,  fieldref_t  string)
    {
        char *str;
        int rw = svp_access(cb, string, &str);
@@ -857,6 +610,7 @@ record except for the first character which is capitalized:
 
        return 0;
    }
+
 
 Field access using the language-managed API (LMA)
 =================================================
@@ -921,11 +675,11 @@ structure: the contents of the ``lma_typemgr_cb`` are copied internally.
 Usage in box code
 -----------------
 
-For the LMA the ``dispatcher_t`` API is extended as follows:
+For the LMA the ``dispatch_t`` API is extended as follows:
 
 .. code:: c
 
-   fieldref_t svp_wrap(dispatcher_t*, typeid_t thetype, void* data);
+   fieldref_t svp_wrap(dispatch_t*, typeid_t thetype, void* data);
  
 The ``wrap`` service creates an entry in the field database and
 associates it with the provided pointer. 
@@ -939,7 +693,7 @@ For example:
 .. code:: c
  
    /* box signature: {A}->{B},  mode LMA for A */
-   int box_func1(dispatcher_t* cb,  void *arg)
+   int box_func1(dispatch_t* cb,  void *arg)
    {
        /* this box simply forwards its input to its output. */
        
@@ -950,7 +704,7 @@ For example:
 .. code:: c
 
    /* box signature: {A}->{B},  mode LMA for A and B */
-   int box_func1(dispatcher_t* cb,  void *arg)
+   int box_func1(dispatch_t* cb,  void *arg)
    {
        /* this box consumes its input and produces an unrelated output */
        
@@ -960,31 +714,429 @@ For example:
        svp_out(cb, svp_wrap(cb, MYTYPE, newdata));
    }
 
-Semantics of ``copyref``/``release`` with LMA
----------------------------------------------
+Discussion about field ownership
+================================
+
+There is a discussion about who is responsible for releasing
+references manipulated by boxes.
+
+There are two questions that need answering:
+
+1. who releases the field references that a box gets as input?
+
+   Two options:
+  
+   a. the box itself, before it terminates.
+   b. the environment, automatically after the box terminates.
+
+2. who releases the field references that a box creates
+   during its execution?
+
+   Three options:
+
+   a. the box itself, after it sends it via out().
+   b. the out() function.
+   c. the environment, automatically after the box terminates.
+
+Analysis
+--------
+
+We analyze the different scenarios.
+
+About 1a: yields memory leaks if the programmer forgets to call ``release``.
+
+About 1b: yields a potential wasted opportunity in long-running boxes
+with the following structure:
+
+.. code:: c
+  
+   // signature: {bytes} -> {<x>, bytes}
+   int examplebox(dispatch_t* cb,  fieldref_t  x)
+   {
+      // this box outputs its input record with tag 0,
+      // then 1000 fresh records with tag 1.
+      svp_out(cb, 0, x);
+
+      for (int i = 0; i < 1000; ++i)
+      { 
+           fieldref_t f = svp_new(cb, 1, BYTES_UNALIGNED);
+           svp_out(cb, 1, f);
+      }
+      return 0;
+   }
+
+When this box runs, the memory for the input field ``x`` will remain
+allocated for the entire duration of the box' execution, even though
+it is not needed after the initial "out".
 
 
-As per `Discussion about field ownership`_ is it useful to introduce
-the notion of a "field reference counter with value 0" for field
-references received as input to a box. Since we may work with field
-references outside of box code, we need to specify what it means to
-have a "field reference counter 0 and still keep the field data".
+About 2a: yields memory leaks if the programmer forgets to call
+``release``. Also, yields an opportunity loss. For example:
 
-We distinguish the field reference counter (FRC) managed by the
-environment for the field reference, and the data reference counter
-(DRC) managed indirectly by the type manager's ``incref`` and
-``decref`` functions. The state transitions are as follows:
+.. code:: c
 
-- FRC goes from N>1 to N-1: ``decref`` is called; result is FRC = DRC
+   // signature: {bytes} -> {bytes}
+   int examplebox(dispatch_t* cb)
+   {
+      fieldref_t x = /* ... */;
+      svp_out(x);
+      svp_release(x);
+   }
 
-- FRC goes from N>=1 to N+1: ``incref`` is called; result is FRC = DRC
+In this example, the continuation of ``examplebox`` in the application
+may be serialized entirely at run-time in the call to ``out``. However
+since the ownership of the newly created field object is not
+transferred to ``out``, this forces the object to persist until
+``out`` returns. Thus the lifespan of the object is unnecessarily
+extended beyond the necessary scope.
 
-- FRC goes from 1 to 0: ``decref`` is *not* called. Result is FRC=0, DRC=1
+About 2b: creates a problem if a box wants to output multiple
+references to the same field data. For example:
 
-- FRC goes from 0 to 1: ``incref`` is *not* called. Result is FRC=1, DRC=1
+.. code:: c
 
-The invariant is that DRC>=1, ie the data remains allocated as long
-as the field reference exists, even when FRC=0. 
+   // signature: {bytes} -> {bytes}
+   int examplebox(dispatch_t* cb,  fieldref_t  x)
+   {
+      for (int i = 0; i < 1000; ++i)
+           svp_out(cb, x);
+
+      return 0;
+   }
+
+This code is invalid: if ``out`` calls ``release``, then after the
+first iteration the reference ``x`` would not be valid any more.
+
+About 2c: like 1b above, is inefficient when a long-running box
+allocates many objects but only outputs each reference a few times. For example:
+
+.. code:: c
+
+   // signature: {<tag>} -> {bytes}
+   int examplebox(dispatch_t* cb,  tagval_t tag)
+   {
+      for (int i = 0; i < 1000; ++i)
+      { 
+           fieldref_t f = svp_new(cb, 1, BYTES_UNALIGNED);
+           svp_out(cb, f);
+      }
+      return 0;
+   }
+
+In this box, it would be inefficient if the environment waits until
+the end before it releases the newly allocated objects. Also it would
+create a memory leak if the box is modified so that the loop never
+terminates.
+
+The outcome of this analysis is the observation that each choice of
+semantics will impact negatively a programming style. We can thus seek
+to provide automatic management by default, with opt-in control when
+the box programmer wants to optimize storage use.
+
+Solution
+--------
+
+We do this as follows.
+
+Default semantics
+`````````````````
+
+By default, the following semantics apply:
+
+- the environment will call ``release`` for each input field object
+  after the box terminates. This implies that the box code must not
+  call ``release`` itself on its input fields.
+
+- the ``out`` function will increase the reference count of the
+  field references it is given as arguments. This implies that the
+  box code must explicitly call ``release`` on newly allocated
+  objects, but not on input fields transferred to ``out``.
+
+The following examples illustrate:
+
++----------------------------------------+-----------------------------------------+
+|Correct                                 |Incorrect                                |
++----------------------------------------+-----------------------------------------+
+|.. code:: c                             |.. code:: c                              |
+|                                        |                                         |
+|   int f1(dispatch_t*, fieldref_t r)    |   int f1x(dispatch_t* cb, fieldref_t r) |
+|   {                                    |   {                                     |
+|     /* do nothing */                   |      svp_release(cb, r);                |
+|     return 0;                          |      return 0;                          |
+|   }                                    |   }                                     |
+|                                        |                                         |
+|                                        |(extraneous release)                     |
++----------------------------------------+-----------------------------------------+
+|.. code:: c                             |.. code:: c                              |
+|                                        |                                         |
+|   int f2(dispatch_t* cb)               |   int f2x(dispatch_t* cb)               |
+|   {                                    |   {                                     |
+|       fieldref_t r = svp_new(...);     |      fieldref_t r = svp_new(...);       |
+|       /* ... populate r ... */         |      /* ... populate r ... */           |
+|       svp_out(cb, r);                  |      svp_out(cb, r);                    |
+|       svp_out(cb, r);                  |      svp_out(cb, r);                    |
+|       svp_release(r);                  |      return 0;                          |
+|       return 0;                        |   }                                     |
+|   }                                    |                                         |
+|                                        |(memory leak: release missing after last |
+|(possible inefficiency: the object      |call to ``out``)                         | 
+|persists until the last call to ``out`` |                                         |
+|completes, even though it is not needed |                                         |
+|in ``f2`` any more at the moment this   |                                         |
+|last call starts)                       |                                         |
++----------------------------------------+-----------------------------------------+
+|.. code:: c                             |.. code:: c                              |
+|                                        |                                         |
+|   int f3(dispatch_t* cb)               |  int f3x(dispatch_t* cb)                |
+|   {                                    |  {                                      |
+|       void *p = /* private... */;      |      void *p = /* private... */;        |
+|       fieldref_t r;                    |      svp_out(cb, svp_wrap(cb, ..., p)); |
+|       r = svp_wrap(cb, ..., p);        |      return 0;                          |
+|       svp_out(cb, r);                  |  }                                      |
+|       svp_release(r);                  |                                         |
+|       return 0;                        |(memory leak: release missing after call |
+|   }                                    |to ``out``)                              |
+|                                        |                                         |
+|(possible inefficiency: the object      |                                         |
+|persists until the call to ``out``      |                                         |
+|completes, even though it is not needed |                                         |
+|in ``f3`` any more at the moment this   |                                         |
+|call starts)                            |                                         |
++----------------------------------------+-----------------------------------------+
+|.. code:: c                             |                                         |
+|                                        |                                         |
+|   int f4(dispatch_t* cb, fieldref_t r) |                                         |
+|   {                                    |                                         |
+|       svp_out(cb, r);                  |                                         |
+|       svp_out(cb, r);                  |                                         |
+|       return 0;                        |                                         |
+|   }                                    |                                         |
+|                                        |                                         |
+|(possible inefficiency: the object      |                                         |
+|persists until the box terminates, even |                                         |
+|though it is not needed in ``f4`` any   |                                         |
+|more at the moment the last call to     |                                         |
+|``out`` starts)                         |                                         |
++----------------------------------------+-----------------------------------------+
+
+Ownership override for output fields
+````````````````````````````````````
+
+We want to be able to optionally transfer ownership of newly created
+field objects to the ``out`` function, ie. tell the ``out`` function
+to not make a new reference upon entry.
+
+For this we can use the following:
+
+.. code:: c
+ 
+   typedef ... outref_t;
+
+   outref_t svp_demit(dispatch_t* cb, fieldref_t r);
+
+The ``demit`` API returns a value suitable for use as argument to the
+``out`` API, which says to ``out`` to "take ownership" of the
+reference. Subsequently, the code invoking ``out`` does not need to
+call ``release`` on that reference any more.
+
+For example:
+
+.. code:: c
+
+  int testbox(dispatch_t* cb)
+  {
+      fieldref_t r = svp_wrap(cb, ...);
+      svp_out(cb, svp_demit(cb, r));
+      /* no need to release r here */
+      return 0;
+  }
+
+This enables the following syntax shortcut, useful for LMA users:
+
+.. code:: c
+
+  #define svp_wrap_demit(x, y, z, t) svp_demit(x, svp_wrap(x, y, z, t))
+
+  int testbox(dispatch_t* cb)
+  {
+      void *p = /* private... */;
+      svp_out(cb, svp_wrap_demit(cb, ..., p));
+      return 0;
+  }
+
+Note that it is not possible to yield ownership of an input argument this way;
+in particular the following example is invalid:
+
+.. code:: c
+
+  int testbox(dispatch_t* cb, fieldref_t r)
+  {
+      svp_out(cb, svp_demit(r));
+  }
+
+This is invalid because the caller of ``testbox`` will call
+``release`` on behalf of ``testbox``, ie ``testbox`` does not "own"
+the reference it is given as input.  As a result, with the code above
+the reference may be released by ``out``, and then again when
+``testbox`` returns, which is invalid. 
+
+To transfer ownership of an input field object, we propose to override
+the override definition for box inputs separately.
+
+Ownership override for input fields
+```````````````````````````````````
+
+We want to be able to optionally take ownership, in the box code, of a
+field object received as input, so that:
+
+- the box code becomes responsible for calling ``release``;
+
+- it can use ``demit`` to transfer ownership of its input
+  to ``out``.
+
+For this we propose a solution in two phases:
+
+1. we introduce a new way to write box function interfaces, where the
+   binding of function variables to fields/tags is done by the
+   function itself instead of its caller. 
+
+   This works as follows:
+ 
+   +----------------------------------------------+----------------------------------------+
+   |Traditional box interface ("ext bind")        |New box interface ("self bind")         |
+   +----------------------------------------------+----------------------------------------+
+   |.. code:: c                                   |.. code:: c                             |
+   |                                              |                                        |
+   |   // signature: {a, <b>} -> ...              |   // signature: {a, <b>} -> ...        |
+   |   int boxfunc(dispatch_t*,                   |  int boxfunc(dispatch_t* cb)           |
+   |               fieldref_t a, tagvalue_t b)    |  {                                     |
+   |   {                                          |      fieldref_t a;                     |
+   |       /* ... use a, b ... */                 |      tagvalue_t b;                     |
+   |       return 0;                              |      svp_bind(cb, &a, &b);             |
+   |   }                                          |                                        |
+   |                                              |      /* ... use a, b ... */            |
+   |                                              |      return 0;                         |
+   |                                              |   }                                    |
+   |                                              |                                        |
+   +----------------------------------------------+----------------------------------------+
+ 
+   For this we introduce the following API:
+  
+   .. code:: c
+ 
+      void svp_bind(dispatch_t*, ...);
+ 
+   Which binds the variables passed by reference to their corresponding
+   input record slots.
+ 
+2. then we introduce a new primitive to "take ownership" of an input
+   field reference:
+ 
+   .. code:: c
+
+      typedef ... claimref_t;
+     
+      claimref_t* svp_claim(dispatch_t*, fieldref_t *var);
+
+   This can be then used as follows:
+
+   .. code:: c
+
+      // signature: {a, <b>, c} -> ...
+      int boxfunc(dispatch_t* cb)
+      {
+          fieldref_t a, c;
+          tagvalue_t b;
+
+          // want to claim c, but not a:
+          svp_bind(cb, &a, &b, svp_claim(cb, &c));
+      
+          /* ... use a, b ... */
+
+          svp_release(cb, c); // because c has been claimed
+          return 0;
+      }
+    
+   In this example, ``claim`` indicates to ``bind`` that the box
+   function is taking ownership. Subsequently, the reference for
+   field ``c`` is not released by the environment when the box
+   function terminates; the box function must call ``release`` itself.
+
+Examples 
+--------
+
+We illustrate with two examples. The first creates 1000 different
+fields:
+
+.. code:: c
+
+   // signature: {<tag>} -> {bytes}
+   int examplebox(dispatch_t* cb,  tagval_t tag)
+   {
+      for (int i = 0; i < 1000; ++i)
+      { 
+           fieldref_t f = svp_new(cb, 1, BYTES_UNALIGNED);            
+           svp_out(cb, svp_demit(cb, f));
+      }
+
+      return 0; 
+   }
+
+At every iteration of the loop ``new`` creates a new reference with
+count 0.  Then ``demit`` gives away ownership to ``out``. All the 1000
+fields are deallocated as part of ``out`` 's continuation; the
+references are not valid when ``out`` returns.
+
+The second example outputs the same input field 1000 times:
+
+.. code:: c
+
+   // signature: {bytes} -> {bytes}
+   int examplebox(dispatch_t* cb,  fieldref_t  x)
+   {
+      for (int i = 0; i < 1000; ++i)
+           svp_out(cb, x);
+
+      return 0;
+   }
+
+Third example: a box outputs a modified copy of its input. We want to
+optimize for the case where the input storage can be directly
+modified. 
+ 
++----------------------------------------+----------------------------------------+----------------------------------------+
+|Incorrect                               |Correct: "ext bind", unoptimized        |Correct: "self bind", preferred         |
++----------------------------------------+----------------------------------------+----------------------------------------+
+|.. code:: c                             |.. code:: c                             |.. code:: c                             |
+|                                        |                                        |                                        |
+|   int boxfunc(dispatch_t* cb,          |   int boxfunc(dispatch_t* cb,          |   int boxfunc(dispatch_t* cb)          |
+|               fieldref_t x)            |               fieldref_t xin)          |   {                                    |
+|   {                                    |   {                                    |      fieldref_t x;                     |
+|     void *ptr;                         |     void *ptr;                         |      void* ptr;                        |
+|     int rw = svp_access(cb, x, &ptr);  |     outref_t x = xin;                  |                                        |
+|     if (!rw) {                         |     int rw = svp_access(cb, x, &ptr);  |      svp_bind(cb, svp_claim(&x));      |
+|       // can't write, so make a copy.  |     if (!rw) {                         |                                        |
+|       x = svp_clone(cb, x);            |       // can't write, so make a copy.  |      int rw = svp_access(cb, x, &ptr); |
+|       svp_access(cb, x, &ptr);         |       x = svp_clone(cb, x);            |      if (!rw) {                        |
+|     }                                  |       svp_access(cb, x, &ptr);         |         fieldref_t y;                  |
+|                                        |                                        |         y = svp_clone(cb, x);          |
+|     /* ... use ptr here ... */         |       // demit the copy, so that       |         svp_access(cb, y, &ptr);       |
+|                                        |       // out() below will take it.     |                                        |
+|     svp_out(cb, x);                    |       x = sp_demit(cb, x);             |         // release the original.       |
+|   }                                    |     }                                  |         svp_release(cb, x);            |
+|                                        |                                        |         x = y;                         |
+|This is incorrect, because if ``clone`` |     /* ... use ptr here ... */         |      }                                 |
+|is called the corresponding object will |                                        |                                        |
+|never be deallocated. This is because   |     svp_out(cb, x);                    |      /* ... use ptr here ...*/         |
+|the environment only calls ``release``  |   }                                    |                                        |
+|automaticaly on the fields that arrive  |                                        |      svp_out(cb, svp_demit(cb, x));    |
+|as input, not those generated by        |This is "unoptimized" because the       |   }                                    |
+|the box                                 |lifespan of the original ``xin`` object |                                        |
+|code.                                   |extends until ``boxfunc`` terminates,   |Here the input object is released       |
+|                                        |although it is not needed past the call |early.                                  |
+|                                        |to ``clone``.                           |                                        |
++----------------------------------------+----------------------------------------+----------------------------------------+
+
 
 Wrapping up
 ===========
@@ -992,7 +1144,7 @@ Wrapping up
 State structures
 ----------------
 
-API dispatcher (``dispatcher_t``) :
+API dispatcher (``dispatch_t``) :
   identifies the connection between an entity and the API services in
   the environment.  Used as base for the field and communication APIs
   visible from box code.
@@ -1012,6 +1164,9 @@ API index
 Name             API provider         User        Description
 ================ ==================== =========== ====================================================
 ``out``          Network interpreter  Box code    Send one output record to the default output stream.
+``bind``         Network interpreter  Box code    Retrieve data from the input record.
+``claim``        Network interpreter  Box code    Disable automatic release on an input field.
+``demit``        Network interpreter  Box code    Relinquish ownership of a field to ``out``.
 ``log``          Logging manager      Any         Log text to a context-dependent logging stream.
 ``access``       Field manager        Any         LMA/EMA: Retrieve pointer to field data.
 ``clone``        Field manager        Any         LMA/EMA: Duplicate an existing object.
@@ -1042,6 +1197,8 @@ We propose to implement the APIs not using regular C functions, but
 instead as indirect calls via the dispatcher wrapped in preprocessor
 macros.
 
+Here is an example implementation:
+
 .. include:: examples/langif.h
    :code: c
 
@@ -1063,7 +1220,7 @@ The APIs proposed above are similar to C4SNet in the following fashion:
        svp_release(hnd, (fieldref_t)(void*)(ptr))
    
    static inline 
-   c4snet_data_t* C4SNetAlloc(dispatcher_t* hnd, c4snet_type_t type, size_t size, void **data)
+   c4snet_data_t* C4SNetAlloc(dispatch_t* hnd, c4snet_type_t type, size_t size, void **data)
    {
        fieldref_t r = svp_new(hnd, size, type);
        svp_access(hnd, r, data);
@@ -1071,7 +1228,7 @@ The APIs proposed above are similar to C4SNet in the following fashion:
    }
    
    static inline
-   size_t C4SNetSizeof(dispatcher_t* hnd, c4snet_data_t* ptr)
+   size_t C4SNetSizeof(dispatch_t* hnd, c4snet_data_t* ptr)
    {
        size_t v;
        svp_getmd(hnd, (fieldref_t)(void*)(ptr), &v, 0, 0);
@@ -1079,7 +1236,7 @@ The APIs proposed above are similar to C4SNet in the following fashion:
    }
    
    static inline
-   void* C4SNetGetData(dispatcher_t* hnd, c4snet_data_t* ptr)
+   void* C4SNetGetData(dispatch_t* hnd, c4snet_data_t* ptr)
    {
        void *v;
        svp_access(hnd, (fieldref_t)(void*)(ptr), &v);
@@ -1099,8 +1256,10 @@ Changes needed to existing application code
 
 The new ``svp_*`` macros should be used, or alternatively the existing
 ``C4SNet*`` calls should be adapted to provide the ``hnd`` as first
-argument.
+argument. Also, the box code should be checked with regards to field
+ownership, to ensure that field objects are not released more or less
+than needed.
 
-Also, the box code should be checked with regards to field ownership,
-to ensure that fields are not released more than needed.
-
+To use the new "self bind" interface using ``bind`` instead of
+receiving record fields as function arguments, a metadata annotation
+can be used on the box.

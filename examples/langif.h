@@ -13,6 +13,8 @@
 /* we use "unsigned long" here although we might use a larger/smaller
    type in the implementation. */
 typedef uintptr_t fieldref_t;
+typedef fieldref_t outref_t;
+typedef fieldref_t claimref_t;
 
 /* we use "unsigned long" here although we might use a larger/smaller
    type in the implementation. */
@@ -28,28 +30,36 @@ typedef dispatch_t {
 } dispatch_t;
 
 dispatch_t_api {
+    /* general input functions */
+    void        (*bind) (dispatch_t*, ...);
+    claimref_t* (*claim)(dispatch_t*, fieldref_t *r);
+
     /* general output functions */
-    int   (*out)(dispatch_t*, ...);
-    void  (*log)(dispatch_t*, int loglevel, const char *fmt, ...);
+    int       (*out)  (dispatch_t*, ...);
+    void      (*log)  (dispatch_t*, int loglevel, const char *fmt, ...);
+    outref_t  (*demit)(dispatch_t*, fieldref_t r);
    
+
     /* Common EMA/LMA functions */
-    int        (*access) (dispatch_t*, fieldref_t theref, void **ptr)
-    int        (*getmd)  (dispatch_t*, fieldref_t theref, size_t *thesize, typeid_t *thetype, size_t *realsize);
-    void       (*release)(dispatch_t*, fieldref_t theref);
-    fieldref_t (*copyref)(dispatch_t*, fieldref_t r);
-    fieldref_t (*clone)  (dispatch_t*, fieldref_t r);
+    int         (*access) (dispatch_t*, fieldref_t theref, void **ptr)
+    int         (*getmd)  (dispatch_t*, fieldref_t theref, size_t *thesize, typeid_t *thetype, size_t *realsize);
+    void        (*release)(dispatch_t*, fieldref_t theref);
+    fieldref_t  (*clone)  (dispatch_t*, fieldref_t r);
+
+    fieldref_t  (*copyref)(dispatch_t*, fieldref_t r);
  
     /* EMA functions */
-    fieldref_t (*new)    (dispatch_t*, size_t thesize, typeid_t thetype);
-    int        (*resize) (dispatch_t*, fieldref_t theref, size_t newsize);
+    fieldref_t  (*new)    (dispatch_t*, size_t thesize, typeid_t thetype);
+    int         (*resize) (dispatch_t*, fieldref_t theref, size_t newsize);
 
     /* LMA functions */
-    fieldref_t (*wrap)   (dispatch_t*, typeid_t thetype, size_t thesize, void* data);
+    fieldref_t  (*wrap)   (dispatch_t*, typeid_t thetype, size_t thesize, void* data);
 
 };
 
 /* wrapper macros to simplify usage of the above */
 
+#define svp_bind(x, ...)      x->api->bind(x, __VA_ARGS__)
 #define svp_access(x, y, z)   x->api->access(x, y, z)
 #define svp_clone(x, y)       x->api->clone(x, y)
 #define svp_copyref(x, y)     x->api->copyref(x, y)
@@ -59,6 +69,13 @@ dispatch_t_api {
 #define svp_release(x, y)     x->api->release(x, y)
 #define svp_resize(x, y, z)   x->api->resize(x, y, z)
 #define svp_wrap(w, x, y, z)  x->api->wrap(w, x, y, z)
+
+/* for demit/claim we do some bit fiddling */
+// demit: sets the MSB of the fieldref, out() will check it.
+#define svp_demit(x, y)       ((y) | ((fieldref_t)1 << (sizeof(fieldref_t)*CHAR_BIT-1)))
+// claim: sets the LSB of the fieldref*, bind() will check it.
+// assumes fieldrefs are never placed at odd memory addresses.
+#define svp_claim(x, y)       ((claimref_t*)((uintptr_t)(y) | 1))
 
 /*** optional backward compatibility with C4SNet ***/
 
