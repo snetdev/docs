@@ -39,7 +39,6 @@ dispatch_t_api {
     void      (*log)  (dispatch_t*, int loglevel, const char *fmt, ...);
     outref_t  (*demit)(dispatch_t*, fieldref_t r);
    
-
     /* Common EMA/LMA functions */
     int         (*access) (dispatch_t*, fieldref_t theref, void **ptr)
     int         (*getmd)  (dispatch_t*, fieldref_t theref, size_t *thesize, typeid_t *thetype, size_t *realsize);
@@ -54,21 +53,24 @@ dispatch_t_api {
 
     /* LMA functions */
     fieldref_t  (*wrap)   (dispatch_t*, typeid_t thetype, size_t thesize, void* data);
-
+    fieldref_t  (*capture)(dispatch_t*, typeid_t thetype, size_t thesize, void* data);
+    void*       (*unwrap) (dispatch_t*, fieldref_t theref);
 };
 
 /* wrapper macros to simplify usage of the above */
 
-#define svp_bind(x, ...)      x->api->bind(x, __VA_ARGS__)
-#define svp_access(x, y, z)   x->api->access(x, y, z)
-#define svp_clone(x, y)       x->api->clone(x, y)
-#define svp_copyref(x, y)     x->api->copyref(x, y)
-#define svp_getmd(w, x, y, z) x->api->getmd(w, x, y, z)
-#define svp_log(x, y, z, ...) x->api->log(x, y, z, __VA_ARGS__)
-#define svp_out(x, ...)       x->api->out(x, __VA_ARGS__)
-#define svp_release(x, y)     x->api->release(x, y)
-#define svp_resize(x, y, z)   x->api->resize(x, y, z)
-#define svp_wrap(w, x, y, z)  x->api->wrap(w, x, y, z)
+#define svp_bind(x, ...)        x->api->bind(x, __VA_ARGS__)
+#define svp_access(x, y, z)     x->api->access(x, y, z)
+#define svp_clone(x, y)         x->api->clone(x, y)
+#define svp_copyref(x, y)       x->api->copyref(x, y)
+#define svp_getmd(w, x, y, z)   x->api->getmd(w, x, y, z)
+#define svp_log(x, y, z, ...)   x->api->log(x, y, z, __VA_ARGS__)
+#define svp_out(x, ...)         x->api->out(x, __VA_ARGS__)
+#define svp_release(x, y)       x->api->release(x, y)
+#define svp_resize(x, y, z)     x->api->resize(x, y, z)
+#define svp_wrap(w, x, y, z)    x->api->wrap(w, x, y, z)
+#define svp_capture(w, x, y, z) x->api->capture(w, x, y, z)
+#define svp_unwrap(x, y)        x->api->unwrap(x, y)
 
 /* for demit/claim we do some bit fiddling */
 // demit: sets the MSB of the fieldref, out() will check it.
@@ -76,6 +78,10 @@ dispatch_t_api {
 // claim: sets the LSB of the fieldref*, bind() will check it.
 // assumes fieldrefs are never placed at odd memory addresses.
 #define svp_claim(x, y)       ((claimref_t*)((uintptr_t)(y) | 1))
+
+#define svp_wrap_demit(x, y, z, t)    svp_demit(x, svp_wrap(x, y, z, t))
+#define svp_capture_demit(x, y, z, t) svp_demit(x, svp_capture(x, y, z, t))
+
 
 /*** optional backward compatibility with C4SNet ***/
 

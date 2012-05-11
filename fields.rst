@@ -257,9 +257,7 @@ For example:
         svp_access(cb, f, &p);
 
         // test and output        
-        svp_out(cb, (tagval_t)(p[0] == '\0'));
-  
-        return 0;
+        return svp_out(cb, (tagval_t)(p[0] == '\0'));
    }
 
 Field database
@@ -582,35 +580,11 @@ following code in ``boxes.c``:
        // output the field reference
        svp_out(cb, f);
 
-       return 0;
-   }
-
-We can make a box which forwards its entire input string as a new
-record except for the first character which is capitalized:
-
-.. code:: c
-
-   #include "langif.h"
-
-   // signature: {string} -> {string}
-   int capitalize(dispatch_t* cb,  fieldref_t  string)
-   {
-       char *str;
-       int rw = svp_access(cb, string, &str);
-       if (!rw) {
-           // can't write, so make a copy.
-           string = svp_clone(cb, string);
-           svp_access(cb, string, &str);
-       }
-
-       // do the update. 
-       str[0] = toupper(str[0]);
-
-       svp_out(cb, string);
+       // release the field reference
+       svp_release(cb, f);
 
        return 0;
    }
-
 
 Field access using the language-managed API (LMA)
 =================================================
@@ -622,19 +596,14 @@ In this setting:
   initialization; and
 
 - in each box, direct pointers to the data allocated by the box
-  language are passed around:
+  language can be passed around:
  
-  - a box function receives directly a pointer to the data, not a
-    field reference;
-
   - when a box function "sends" the data to ``out``, it must first
     *wrap* the data pointer in a field container to obtain a field
     reference.
 
-  - the pointer passed to the box function transfers ownership of that
-    reference. In particular, if the box consumes an input field 
-    and does not forward it via the ``out`` function, it must 
-    decrease its reference counter and check for deallocation.
+  - a box can *unwrap* an input field to 
+    release the field reference without deallocating the data.
 
 Registration for LMA types during system initialization
 -------------------------------------------------------
@@ -680,39 +649,130 @@ For the LMA the ``dispatch_t`` API is extended as follows:
 .. code:: c
 
    fieldref_t svp_wrap(dispatch_t*, typeid_t thetype, void* data);
- 
-The ``wrap`` service creates an entry in the field database and
-associates it with the provided pointer. 
+   fieldref_t svp_capture(dispatch_t*, typeid_t thetype, void* data);
 
-Subsequently, whenever the environment needs to make a logical copy
-of the object or release a copy, it will also call the language-provided 
-reference management functions. 
- 
-For example:
+   void*      svp_unwrap(dispatch_t*, fieldref_t ref);
+
+Semantics:
+
+``wrap`` / ``capture`` : 
+
+  Both ``wrap`` and ``capture`` create an entry in the field database
+  and associates it with the provided pointer.  Subsequently, whenever
+  the environment needs to make a logical copy of the object or release
+  a copy, it will also call the language-provided reference management
+  functions. ``wrap`` and ``capture`` differ in that ``wrap`` leaves
+  ownership of the data pointer to the calling code, whereas ``capture``
+  takes ownership. 
+
+  Conceptually ``capture`` is implemented as:
+  
+  .. code:: c
+  
+     fieldref_t svp_capture(dispatch_t* cb, typeid_t thetype, void* data)
+     {
+         fieldref_t f = svp_wrap(cb, thetype, data);
+         /* language-specific decref(data) */
+         return f;
+     }
+   
+
+``unwrap`` :
+
+  ``unwrap`` drops the provided field reference without decreasing
+  the data object's reference counter, and returns the unwrapped
+  data object.
+
+  Conceptually ``unwrap`` is implemented as:
+  
+  .. code:: c
+  
+     void* svp_unwrap(dispatch_t* cb, fieldref_t f)
+     {
+         void* data;
+         svp_access(cb, f, &data);
+         /* language-specific incref(data) */
+         svp_release(f);
+         return data;
+     }
+   
+
+  In particular:
+
+  - ``unwrap(capture(p))`` is the identity function and does not
+    impact the reference count;
+
+  - ``unwrap(wrap(p))`` is the identity function, but will require
+    one extra call to ``decref`` to fully release the object.
+
+Examples
+--------
+
+The following box emits a freshly created object:
 
 .. code:: c
- 
-   /* box signature: {A}->{B},  mode LMA for A */
-   int box_func1(dispatch_t* cb,  void *arg)
+
+   int box_func1(dispatch_t* cb)
    {
-       /* this box simply forwards its input to its output. */
-       
-       svp_out(cb, svp_wrap(cb, MYTYPE, arg));
+       void *newdata = /* ... alloc ... */;
+
+       fieldref_t r = svp_wrap(cb, MYTYPE, newdata);
+       svp_out(cb, r);
+       svp_release(cb, r);
+
+       /* language-specific decref(newdata) */
+
+       return 0;
    }
 
+Note that ``wrap`` does not transfer the ownership of the bare data
+pointer into the field reference. Instead it increases the reference
+counter of the data object using the lower-level ``incref`` API. 
+In the previous example, this implies that ``release`` preserves the
+object, which must be subsequently deallocated explicitly: if
+``newdata`` has a reference count set to 1 upon ``wrap``, then after
+wrap it will have count ``2``, inside ``out`` it may grow larger than
+2, then ``release`` decreases the count back to 1. 
+
+To fully transfer ownership ``capture`` can be used:
 
 .. code:: c
 
-   /* box signature: {A}->{B},  mode LMA for A and B */
-   int box_func1(dispatch_t* cb,  void *arg)
+   int box_func2(dispatch_t* cb)
    {
-       /* this box consumes its input and produces an unrelated output */
-       
-       /* .. decrease reference on arg, check if it was last reference ... */
- 
-       void *newdata = ...;
-       svp_out(cb, svp_wrap(cb, MYTYPE, newdata));
+       void *newdata = /* ... alloc ... */;
+
+       fieldref_t r = svp_capture(cb, MYTYPE, newdata);
+       svp_out(cb, r);
+
+       /* the following call to release() also deallocates
+          the object, since capture() has taken ownership. */
+       svp_release(cb, r);
+
+       /* here decref(newdata) is not needed any more. */
+
+       return 0;
    }
+
+The following box code receives a managed object as input, processes
+it internally, then emits it again as output:
+
+.. code:: c
+
+   int box_func3(dispatch_t* cb, fieldref_t x)
+   {
+      void* xdata = svp_unwrap(cb, x);
+
+      /* ... process via xdata internally ... */
+
+      fieldref_t r = svp_capture(cb, xdata);
+      svp_out(cb, r);
+      svp_release(cb, r);
+ 
+      return 0;
+   }
+
+We discuss below how to simplify this code further.
 
 Discussion about field ownership
 ================================
@@ -890,13 +950,13 @@ The following examples illustrate:
 |   int f3(dispatch_t* cb)               |  int f3x(dispatch_t* cb)                |
 |   {                                    |  {                                      |
 |       void *p = /* private... */;      |      void *p = /* private... */;        |
-|       fieldref_t r;                    |      svp_out(cb, svp_wrap(cb, ..., p)); |
-|       r = svp_wrap(cb, ..., p);        |      return 0;                          |
-|       svp_out(cb, r);                  |  }                                      |
-|       svp_release(r);                  |                                         |
-|       return 0;                        |(memory leak: release missing after call |
-|   }                                    |to ``out``)                              |
-|                                        |                                         |
+|       fieldref_t r;                    |      svp_out(cb,                        |
+|       r = svp_capture(cb, ..., p);     |              svp_capture(cb, ..., p));  |
+|       svp_out(cb, r);                  |      return 0;                          |
+|       svp_release(r);                  |  }                                      |
+|       return 0;                        |                                         |
+|   }                                    |(memory leak: release missing after call |
+|                                        |to ``out``)                              |
 |(possible inefficiency: the object      |                                         |
 |persists until the call to ``out``      |                                         |
 |completes, even though it is not needed |                                         |
@@ -907,9 +967,8 @@ The following examples illustrate:
 |                                        |                                         |
 |   int f4(dispatch_t* cb, fieldref_t r) |                                         |
 |   {                                    |                                         |
-|       svp_out(cb, r);                  |                                         |
-|       svp_out(cb, r);                  |                                         |
-|       return 0;                        |                                         |
+|       return svp_out(cb, r) &&         |                                         |
+|              svp_out(cb, r);           |                                         |
 |   }                                    |                                         |
 |                                        |                                         |
 |(possible inefficiency: the object      |                                         |
@@ -917,6 +976,7 @@ The following examples illustrate:
 |though it is not needed in ``f4`` any   |                                         |
 |more at the moment the last call to     |                                         |
 |``out`` starts)                         |                                         |
+|                                        |                                         |
 +----------------------------------------+-----------------------------------------+
 
 Ownership override for output fields
@@ -945,7 +1005,7 @@ For example:
 
   int testbox(dispatch_t* cb)
   {
-      fieldref_t r = svp_wrap(cb, ...);
+      fieldref_t r = svp_capture(cb, ...);
       svp_out(cb, svp_demit(cb, r));
       /* no need to release r here */
       return 0;
@@ -955,13 +1015,12 @@ This enables the following syntax shortcut, useful for LMA users:
 
 .. code:: c
 
-  #define svp_wrap_demit(x, y, z, t) svp_demit(x, svp_wrap(x, y, z, t))
+  #define svp_capture_demit(x, y, z, t) svp_demit(x, svp_capture(x, y, z, t))
 
   int testbox(dispatch_t* cb)
   {
       void *p = /* private... */;
-      svp_out(cb, svp_wrap_demit(cb, ..., p));
-      return 0;
+      return svp_out(cb, svp_capture_demit(cb, ..., p));
   }
 
 Note that it is not possible to yield ownership of an input argument this way;
@@ -971,7 +1030,7 @@ in particular the following example is invalid:
 
   int testbox(dispatch_t* cb, fieldref_t r)
   {
-      svp_out(cb, svp_demit(r));
+      return svp_out(cb, svp_demit(r));
   }
 
 This is invalid because the caller of ``testbox`` will call
@@ -1062,8 +1121,8 @@ For this we propose a solution in two phases:
    field ``c`` is not released by the environment when the box
    function terminates; the box function must call ``release`` itself.
 
-Examples 
---------
+Examples using the EMA
+----------------------
 
 We illustrate with two examples. The first creates 1000 different
 fields:
@@ -1122,21 +1181,85 @@ modified.
 |                                        |                                        |         y = svp_clone(cb, x);          |
 |     /* ... use ptr here ... */         |       // demit the copy, so that       |         svp_access(cb, y, &ptr);       |
 |                                        |       // out() below will take it.     |                                        |
-|     svp_out(cb, x);                    |       x = sp_demit(cb, x);             |         // release the original.       |
+|     return svp_out(cb, x);             |       x = sp_demit(cb, x);             |         // release the original.       |
 |   }                                    |     }                                  |         svp_release(cb, x);            |
 |                                        |                                        |         x = y;                         |
 |This is incorrect, because if ``clone`` |     /* ... use ptr here ... */         |      }                                 |
 |is called the corresponding object will |                                        |                                        |
-|never be deallocated. This is because   |     svp_out(cb, x);                    |      /* ... use ptr here ...*/         |
+|never be deallocated. This is because   |     return svp_out(cb, x);             |      /* ... use ptr here ...*/         |
 |the environment only calls ``release``  |   }                                    |                                        |
-|automaticaly on the fields that arrive  |                                        |      svp_out(cb, svp_demit(cb, x));    |
-|as input, not those generated by        |This is "unoptimized" because the       |   }                                    |
-|the box                                 |lifespan of the original ``xin`` object |                                        |
-|code.                                   |extends until ``boxfunc`` terminates,   |Here the input object is released       |
-|                                        |although it is not needed past the call |early.                                  |
-|                                        |to ``clone``.                           |                                        |
+|automaticaly on the fields that arrive  |                                        |      return svp_out(cb,                |
+|as input, not those generated by        |This is "unoptimized" because the       |                     svp_demit(cb, x)); |
+|the box                                 |lifespan of the original ``xin`` object |   }                                    |
+|code.                                   |extends until ``boxfunc`` terminates,   |                                        |
+|                                        |although it is not needed past the call |Here the input object is released early |
+|                                        |to ``clone``.                           |when ``clone`` is used.                 |
+|                                        |                                        |                                        |
 +----------------------------------------+----------------------------------------+----------------------------------------+
 
+Examples using the LMA
+----------------------
+
+A box allocates a managed private data object, then sends it as an output field:
+
+.. code:: c
+
+   int boxfunc(dispatch_t* cb)
+   {
+       void *p = /* alloc */;
+       
+       svp_out(cb,
+        svp_wrap_demit(cb, MYTYPE, p));
+
+       /* language-specific decref(p) */
+       return 0;
+   }       
+
+In this code, the call to ``wrap_demit`` captures the data pointer
+in a field reference, whose ownership is subsequently transferred to
+``out``. However, the ownership of the data pointer itself is not
+transferred, and it must thus still be deallocated in the
+language-specific manner after the call to ``out``.
+
+To transfer the ownership of the data object itself, use ``capture``:
+
+.. code:: c
+
+   int boxfunc(dispatch_t* cb)
+   {
+       void *p = /* alloc */;
+       
+       svp_out(cb,
+        svp_capture_demit(cb, MYTYPE, p));
+
+       /* no decref(p) needed here */
+       return 0;
+   }       
+
+In another example, we want to write a box which emits a single
+private object in two successive records:
+
+.. code:: c
+
+   int boxfunc(dispatch_t* cb)
+   {
+       void *p = /* ... alloc ... */;
+
+       svp_out(cb,
+        svp_wrap_demit(cb, ..., p));
+
+       /* ... */
+
+       svp_out(cb,
+        svp_wrap_demit(cb, ..., p));
+
+       /* language-specific decref(p) */
+
+       return 0;
+   }
+
+In this example, the initial allocation of ``p`` persists across
+multiple calls to ``wrap``.
 
 Wrapping up
 ===========
@@ -1175,6 +1298,8 @@ Name             API provider         User        Description
 ``new``          Field manager        Any         EMA: create a new object.
 ``resize``       Field manager        Any         EMA: resize an existing object.
 ``wrap``         Field manager        Any         LMA: wrap an object into a field reference.
+``capture``      Field manager        Any         LMA: transfer an object into a field reference.
+``unwrap``       Field manager        Any         LMA: unwrap a field reference and retrieve object.
 ``alloc``        EMA type mgr.        Field mgr.  Allocate space for a new object.
 ``free``         EMA type mgr.        Field mgr.  Deallocate space.
 ``copy``         EMA/LMA type mgr.    Field mgr.  Duplicate object data.
@@ -1189,6 +1314,33 @@ Name             API provider         User        Description
 ``init``         Data language mgr.   Sys. init.  Initialize a data language manager.
 ``cleanup``      Data language mgr.   Sys. init.  Clean up a data language manager.
 ================ ==================== =========== ====================================================
+
+Summary of ownership rules
+--------------------------
+
+================= ===============================================================
+Pattern           Ownership rule
+================= ===============================================================
+new(), clone()    Caller of ``new`` receives ownership of new reference.
+wrap()            Caller of ``wrap`` keeps ownership of input object,
+                  receives ownership of the newly created field reference.
+unwrap()          Caller of ``wrap`` transfers ownership of field reference 
+                  to ``unwrap`` (which then calls ``release``), and receives
+                  back ownership of the data object.
+capture()         Caller of ``wrap`` receives ownership of the newly created
+                  field reference; ownership of input object transferred to
+                  the field reference: last ``release`` on the field reference
+                  also deallocates captured object.
+copyref()         Caller of ``copyref`` receives ownership for output reference.
+out()             Ownership of field reference stays in caller.
+out(demit())      Ownership of field reference transferred to ``out``.
+bind()            Ownership of input field reference stays in environment.
+bind(claim())     Ownership of input field reference transferred to caller
+                  of ``bind``.
+================= ===============================================================
+
+
+
 
 Contents of ``langif.h``
 ------------------------
