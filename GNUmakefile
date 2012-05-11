@@ -16,6 +16,9 @@ SOURCES := $(wildcard *.rst)
 
 all: $(SOURCES:.rst=.html) $(SOURCES:.rst=.pdf)
 
+clean:
+	rm -f *.log *.out *.aux *.toc *\~
+
 .SUFFIXES: .html .tex .pdf .rst .sty .css
 
 %.html: %.rst tools/colorful-$(PYGMENTIZE_HTML_STYLE).css
