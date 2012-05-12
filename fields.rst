@@ -1014,7 +1014,7 @@ The following examples illustrate:
 |                                         |   }                                     |
 |(possible inefficiency: the object       |                                         |
 |persists until ``f4`` terminates, for    |(extraneous release: both explicitly in  |
-|``unwrap`` keeps ownership of the object |``f4x` by ``unwrap_release``, and when   |
+|``unwrap`` keeps ownership of the object |``f4x` by ``unwrap_release`` and when    |
 |in the field reference, and the field    |``f4x`` terminates by the environment)   |
 |reference is only released when the box  |                                         |
 |terminates)                              |                                         |
@@ -1397,9 +1397,10 @@ Name               API provider         User        Description
 ``demit``          Network interpreter  Box code    Relinquish ownership of a field to ``out``.
 ``log``            Logging manager      Any         Log text to a context-dependent logging stream.
 ``access``         Field manager        Any         LMA/EMA: Retrieve pointer to field data.
+``getmd``          Field manager        Any         LMA/EMA: Retrieve field content metadata.
 ``clone``          Field manager        Any         LMA/EMA: Duplicate an existing object.
 ``copyref``        Field manager        Any         LMA/EMA: Create a new reference to an existing object.
-``getmd``          Field manager        Any         LMA/EMA: Retrieve field content metadata.
+``release``        Field manager        Any         LMA/EMA: Release a reference.
 ``new``            Field manager        Any         EMA: create a new object.
 ``resize``         Field manager        Any         EMA: resize an existing object.
 ``wrap``           Field manager        Any         LMA: wrap an object into a field reference.
