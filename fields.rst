@@ -668,6 +668,7 @@ For the LMA the ``dispatch_t`` API is extended as follows:
    fieldref_t svp_capture(dispatch_t*, typeid_t thetype, void* data);
 
    void*      svp_unwrap(dispatch_t*, fieldref_t ref);
+   void*      svp_unwrap_release(dispatch_t*, fieldref_t ref);
 
 Semantics:
 
@@ -695,9 +696,8 @@ Semantics:
 
 ``unwrap`` :
 
-  ``unwrap`` drops the provided field reference without decreasing
-  the data object's reference counter, and returns the unwrapped
-  data object.
+  ``unwrap`` retrieve a new reference to the data object from the
+  field reference. The original reference remains "in the field".
 
   Conceptually ``unwrap`` is implemented as:
   
@@ -708,18 +708,35 @@ Semantics:
          void* data;
          svp_access(cb, f, &data);
          /* language-specific incref(data) */
-         svp_release(f);
          return data;
      }
    
 
-  In particular:
+  After the call to ``unwrap``, the field reference still
+  "holds" the data object and must still be dropped.
 
-  - ``unwrap(capture(p))`` is the identity function and does not
-    impact the reference count;
+``unwrap_release`` :
 
-  - ``unwrap(wrap(p))`` is the identity function, but will require
-    one extra call to ``decref`` to fully release the object.
+  ``unwrap_release`` retrieve the data object from the field reference
+  and drop the field reference.
+
+  Conceptually ``unwrap_release`` is implemented as:
+  
+  .. code:: c
+  
+     void* svp_unwrap_release(dispatch_t* cb, fieldref_t f)
+     {
+         void* data;
+         svp_access(cb, f, &data);
+         /* language-specific incref(data) */
+         svp_release(cb, f);
+         return data;
+     }
+   
+
+  Note that ``unwrap_release`` can only be called if the caller has
+  ownership of the field reference. This is not true by default for
+  input fields. See `Discussion about field ownership`_ for details.
 
 Examples
 --------
@@ -930,70 +947,93 @@ By default, the following semantics apply:
 
 The following examples illustrate:
 
-+----------------------------------------+-----------------------------------------+
-|Correct                                 |Incorrect                                |
-+----------------------------------------+-----------------------------------------+
-|.. code:: c                             |.. code:: c                              |
-|                                        |                                         |
-|   int f1(dispatch_t*, fieldref_t r)    |   int f1x(dispatch_t* cb, fieldref_t r) |
-|   {                                    |   {                                     |
-|     /* do nothing */                   |      svp_release(cb, r);                |
-|     return 0;                          |      return 0;                          |
-|   }                                    |   }                                     |
-|                                        |                                         |
-|                                        |(extraneous release)                     |
-+----------------------------------------+-----------------------------------------+
-|.. code:: c                             |.. code:: c                              |
-|                                        |                                         |
-|   int f2(dispatch_t* cb)               |   int f2x(dispatch_t* cb)               |
-|   {                                    |   {                                     |
-|       fieldref_t r = svp_new(...);     |      fieldref_t r = svp_new(...);       |
-|       /* ... populate r ... */         |      /* ... populate r ... */           |
-|       svp_out(cb, r);                  |      svp_out(cb, r);                    |
-|       svp_out(cb, r);                  |      svp_out(cb, r);                    |
-|       svp_release(r);                  |      return 0;                          |
-|       return 0;                        |   }                                     |
-|   }                                    |                                         |
-|                                        |(memory leak: release missing after last |
-|(possible inefficiency: the object      |call to ``out``)                         | 
-|persists until the last call to ``out`` |                                         |
-|completes, even though it is not needed |                                         |
-|in ``f2`` any more at the moment this   |                                         |
-|last call starts)                       |                                         |
-+----------------------------------------+-----------------------------------------+
-|.. code:: c                             |.. code:: c                              |
-|                                        |                                         |
-|   int f3(dispatch_t* cb)               |  int f3x(dispatch_t* cb)                |
-|   {                                    |  {                                      |
-|       void *p = /* private... */;      |      void *p = /* private... */;        |
-|       fieldref_t r;                    |      svp_out(cb,                        |
-|       r = svp_capture(cb, ..., p);     |              svp_capture(cb, ..., p));  |
-|       svp_out(cb, r);                  |      return 0;                          |
-|       svp_release(r);                  |  }                                      |
-|       return 0;                        |                                         |
-|   }                                    |(memory leak: release missing after call |
-|                                        |to ``out``)                              |
-|(possible inefficiency: the object      |                                         |
-|persists until the call to ``out``      |                                         |
-|completes, even though it is not needed |                                         |
-|in ``f3`` any more at the moment this   |                                         |
-|call starts)                            |                                         |
-+----------------------------------------+-----------------------------------------+
-|.. code:: c                             |                                         |
-|                                        |                                         |
-|   int f4(dispatch_t* cb, fieldref_t r) |                                         |
-|   {                                    |                                         |
-|       return svp_out(cb, r) &&         |                                         |
-|              svp_out(cb, r);           |                                         |
-|   }                                    |                                         |
-|                                        |                                         |
-|(possible inefficiency: the object      |                                         |
-|persists until the box terminates, even |                                         |
-|though it is not needed in ``f4`` any   |                                         |
-|more at the moment the last call to     |                                         |
-|``out`` starts)                         |                                         |
-|                                        |                                         |
-+----------------------------------------+-----------------------------------------+
++-----------------------------------------+-----------------------------------------+
+|Correct                                  |Incorrect                                |
++-----------------------------------------+-----------------------------------------+
+|.. code:: c                              |.. code:: c                              |
+|                                         |                                         |
+|   int f1(dispatch_t*, fieldref_t r)     |   int f1x(dispatch_t* cb, fieldref_t r) |
+|   {                                     |   {                                     |
+|     /* do nothing */                    |      svp_release(cb, r);                |
+|     return 0;                           |      return 0;                          |
+|   }                                     |   }                                     |
+|                                         |                                         |
+|                                         |(extraneous release: both explicily in   |
+|                                         |``f1x`` and when ``f1x`` terminates by   |
+|                                         |the environment.)                        |
++-----------------------------------------+-----------------------------------------+
+|.. code:: c                              |.. code:: c                              |
+|                                         |                                         |
+|   int f2(dispatch_t* cb)                |   int f2x(dispatch_t* cb)               |
+|   {                                     |   {                                     |
+|       fieldref_t r = svp_new(...);      |      fieldref_t r = svp_new(...);       |
+|       /* ... populate r ... */          |      /* ... populate r ... */           |
+|       svp_out(cb, r);                   |      svp_out(cb, r);                    |
+|       svp_out(cb, r);                   |      svp_out(cb, r);                    |
+|       svp_release(r);                   |      return 0;                          |
+|       return 0;                         |   }                                     |
+|   }                                     |                                         | 
+|                                         |(memory leak: release missing after last |
+|(possible inefficiency: the object       |call to ``out``)                         |
+|persists until the last call to ``out``  |                                         |
+|completes, even though it is not needed  |                                         |
+|in ``f2`` any more at the moment this    |                                         |
+|last call starts)                        |                                         |
++-----------------------------------------+-----------------------------------------+
+|.. code:: c                              |.. code:: c                              |
+|                                         |                                         |
+|   int f3(dispatch_t* cb)                |  int f3x(dispatch_t* cb)                |
+|   {                                     |  {                                      |
+|       void *p = /* private... */;       |      void *p = /* private... */;        |
+|       fieldref_t r;                     |      svp_out(cb,                        |
+|       r = svp_capture(cb, ..., p);      |              svp_capture(cb, ..., p));  |
+|       svp_out(cb, r);                   |      return 0;                          |
+|       svp_release(r);                   |  }                                      |
+|       return 0;                         |                                         |
+|   }                                     |(memory leak: release missing after call |
+|                                         |to ``out``)                              |
+|(possible inefficiency: the object       |                                         |
+|persists until the call to ``out``       |                                         |
+|completes, even though it is not needed  |                                         |
+|in ``f3`` any more at the moment this    |                                         |
+|call starts)                             |                                         |
++-----------------------------------------+-----------------------------------------+
+|.. code:: c                              |.. code:: c                              |
+|                                         |                                         |
+|   // sig: (a) -> (<b>)                  |   // sig: (a) -> (<b>)                  |
+|   int f4(dispatch_t* cb, fieldref_t r)  |   int f4x(dispatch_t* cb, fieldref_t r) |
+|   {                                     |   {                                     |
+|      void *p = svp_unwrap(cb, r);       |      void *p;                           |
+|                                         |      p = svp_unwrap_release(cb, r);     |
+|      /* ... use p ... */                |                                         |
+|                                         |      /* ... use p ... */                |
+|      /* language-specific decref(p) */  |                                         |
+|                                         |      /* language-specific decref(p) */  |
+|      return svp_out(cb, (tagval_t)123); |                                         |
+|   }                                     |      return svp_out(cb, (tagval_t)123); |
+|                                         |   }                                     |
+|(possible inefficiency: the object       |                                         |
+|persists until ``f4`` terminates, for    |(extraneous release: both explicitly in  |
+|``unwrap`` keeps ownership of the object |``f4x` by ``unwrap_release``, and when   |
+|in the field reference, and the field    |``f4x`` terminates by the environment)   |
+|reference is only released when the box  |                                         |
+|terminates)                              |                                         |
++-----------------------------------------+-----------------------------------------+
+|.. code:: c                              |                                         |
+|                                         |                                         |
+|   int f5(dispatch_t* cb, fieldref_t r)  |                                         |
+|   {                                     |                                         |
+|       return svp_out(cb, r) &&          |                                         |
+|              svp_out(cb, r);            |                                         |
+|   }                                     |                                         |
+|                                         |                                         |
+|(possible inefficiency: the object       |                                         |
+|persists until the box terminates, even  |                                         |
+|though it is not needed in ``f5`` any    |                                         |
+|more at the moment the last call to      |                                         |
+|``out`` starts)                          |                                         |
+|                                         |                                         |
++-----------------------------------------+-----------------------------------------+
 
 Ownership override for output fields
 ````````````````````````````````````
@@ -1216,6 +1256,9 @@ modified.
 Examples using the LMA
 ----------------------
 
+Ownership transfer on output
+````````````````````````````
+
 A box allocates a managed private data object, then sends it as an output field:
 
 .. code:: c
@@ -1277,8 +1320,133 @@ private object in two successive records:
 In this example, the initial allocation of ``p`` persists across
 multiple calls to ``wrap``.
 
+
+Ownership transfer on input
+```````````````````````````
+
+A box receives a data object on input, and wants to drop the field reference as early as possible:
+
+.. code:: c
+
+   int boxfunc(dispatch_t* cb)
+   {
+       fieldref_t r;
+       svp_bind(cb, svp_claim(cb, &r));
+       void *p = svp_unwrap_release(r);
+
+       /* ... use p ... */
+       
+       /* language-specific decref(p) */ 
+      
+       return svp_out(cb, (tagval_t)123);
+   }
+
+In this example, the function first claims ownership of the field
+reference, which implies it will need to call ``release`` on that
+reference later. Subsequently, ``unwrap_release`` takes a new object
+reference out of the input field reference, then releases the input
+field reference. The result is that the object's reference counter is
+unchanged, while the field reference can be released early.
+
 Wrapping up
 ===========
+
+
+Levels of complexity
+--------------------
+
++-------------------------+--------------------------------------------------------+
+|Level of complexity      |Main services used                                      |
++-------------------------+--------------------------------------------------------+
+|Simple EMA               |- produce output:                                       |
+|                         |  ``new`` / ``out`` / ``release``                       |
+|(loose scopes: lifespans |                                                        |
+|longer than necessary)   |- consume input:                                        |
+|                         |  ``access``                                            |
++-------------------------+--------------------------------------------------------+
+|Simple LMA               |- produce output:                                       |
+|                         |  ``wrap`` (or ``capture``) / ``out`` / ``release``     |
+|(loose scopes: lifespans |                                                        |
+|longer than necessary)   |- consume input:                                        |
+|                         |  ``unwrap``                                            |
++-------------------------+--------------------------------------------------------+
+|Advanced EMA             |- produce output:                                       |
+|                         |  ``new`` / ``demit`` / ``out``                         |
+|(tight scopes: lifespans |                                                        |
+|explicitly limited)      |- consume input:                                        |
+|                         |  ``claim`` / ``bind`` / ``access`` / ``release``       |
++-------------------------+--------------------------------------------------------+
+|Advanced LMA             |- produce output:                                       |
+|                         |  ``wrap_demit`` (or ``capture_demit``) / ``out``       |
+|(tight scopes: lifespans |                                                        |
+|explicitly limited)      |- consume input:                                        |
+|                         |  ``claim`` / ``bind`` / ``unwrap_release``             |
+|                         |                                                        |
++-------------------------+--------------------------------------------------------+
+
+
+API index
+---------
+
+================== ==================== =========== ====================================================
+Name               API provider         User        Description
+================== ==================== =========== ====================================================
+``out``            Network interpreter  Box code    Send one output record to the default output stream.
+``bind``           Network interpreter  Box code    Retrieve data from the input record.
+``claim``          Network interpreter  Box code    Disable automatic release on an input field.
+``demit``          Network interpreter  Box code    Relinquish ownership of a field to ``out``.
+``log``            Logging manager      Any         Log text to a context-dependent logging stream.
+``access``         Field manager        Any         LMA/EMA: Retrieve pointer to field data.
+``clone``          Field manager        Any         LMA/EMA: Duplicate an existing object.
+``copyref``        Field manager        Any         LMA/EMA: Create a new reference to an existing object.
+``getmd``          Field manager        Any         LMA/EMA: Retrieve field content metadata.
+``new``            Field manager        Any         EMA: create a new object.
+``resize``         Field manager        Any         EMA: resize an existing object.
+``wrap``           Field manager        Any         LMA: wrap an object into a field reference.
+``capture``        Field manager        Any         LMA: transfer an object into a field reference.
+``unwrap``         Field manager        Any         LMA: retrieve new reference on contained object.
+``unwrap_release`` Field manager        Any         LMA: retrieve object, drop field reference.
+``alloc``          EMA type mgr.        Field mgr.  Allocate space for a new object.
+``free``           EMA type mgr.        Field mgr.  Deallocate space.
+``copy``           EMA/LMA type mgr.    Field mgr.  Duplicate object data.
+``incref``         LMA type mgr.        Field mgr.  Increase the reference counter.
+``decref``         LMA type mgr.        Field mgr.  Decrease the reference counter, maybe free.
+``testref``        LMA type mgr.        Field mgr.  Test the reference counter.
+``getsize``        LMA type mgr.        Field mgr.  Estimate the allocated memory size.
+``serialize``      Data language mgr.   Dist. mgr.  Serialize an object.
+``getsersize``     Data language mgr.   Dist. mgr.  Compute buffer size for serialization.
+``deserialize``    Data language mgr.   Dist. mgr.  Deserialize an object.
+``getdesersize``   Data language mgr.   Dist. mgr.  Compute object size for deserialization.
+``init``           Data language mgr.   Sys. init.  Initialize a data language manager.
+``cleanup``        Data language mgr.   Sys. init.  Clean up a data language manager.
+================== ==================== =========== ====================================================
+
+Summary of ownership rules
+--------------------------
+
+================= ===============================================================
+Pattern           Ownership rule
+================= ===============================================================
+new(), clone()    Caller of ``new`` receives ownership of new reference.
+wrap()            Caller of ``wrap`` keeps ownership of input object,
+                  receives ownership of the newly created field reference.
+unwrap()          Caller receives ownership of the data object, 
+                  field reference retains ownership.
+unwrap_release()  Caller transfers ownership of field reference 
+                  to ``unwrap_release`` (which then calls ``release``), and receives
+                  back ownership of the data object.
+capture()         Caller of ``capture`` receives ownership of the newly created
+                  field reference; ownership of input object transferred to
+                  the field reference: last ``release`` on the field reference
+                  also deallocates captured object.
+copyref()         Caller of ``copyref`` receives ownership for output reference.
+out()             Ownership of field reference stays in caller.
+out(demit())      Ownership of field reference transferred to ``out``.
+bind()            Ownership of input field reference stays in environment.
+bind(claim())     Ownership of input field reference transferred to caller
+                  of ``bind``.
+================= ===============================================================
+
 
 State structures
 ----------------
@@ -1295,67 +1463,6 @@ registration context (``regctx_t``) :
 data manager context (produced by ``langmgr_cb->init``) :
   identifies an opaque state environment for the concrete type
   management functions.
-
-API index
----------
-
-================ ==================== =========== ====================================================
-Name             API provider         User        Description
-================ ==================== =========== ====================================================
-``out``          Network interpreter  Box code    Send one output record to the default output stream.
-``bind``         Network interpreter  Box code    Retrieve data from the input record.
-``claim``        Network interpreter  Box code    Disable automatic release on an input field.
-``demit``        Network interpreter  Box code    Relinquish ownership of a field to ``out``.
-``log``          Logging manager      Any         Log text to a context-dependent logging stream.
-``access``       Field manager        Any         LMA/EMA: Retrieve pointer to field data.
-``clone``        Field manager        Any         LMA/EMA: Duplicate an existing object.
-``copyref``      Field manager        Any         LMA/EMA: Create a new reference to an existing object.
-``getmd``        Field manager        Any         LMA/EMA: Retrieve field content metadata.
-``new``          Field manager        Any         EMA: create a new object.
-``resize``       Field manager        Any         EMA: resize an existing object.
-``wrap``         Field manager        Any         LMA: wrap an object into a field reference.
-``capture``      Field manager        Any         LMA: transfer an object into a field reference.
-``unwrap``       Field manager        Any         LMA: unwrap a field reference and retrieve object.
-``alloc``        EMA type mgr.        Field mgr.  Allocate space for a new object.
-``free``         EMA type mgr.        Field mgr.  Deallocate space.
-``copy``         EMA/LMA type mgr.    Field mgr.  Duplicate object data.
-``incref``       LMA type mgr.        Field mgr.  Increase the reference counter.
-``decref``       LMA type mgr.        Field mgr.  Decrease the reference counter, maybe free.
-``testref``      LMA type mgr.        Field mgr.  Test the reference counter.
-``getsize``      LMA type mgr.        Field mgr.  Estimate the allocated memory size.
-``serialize``    Data language mgr.   Dist. mgr.  Serialize an object.
-``getsersize``   Data language mgr.   Dist. mgr.  Compute buffer size for serialization.
-``deserialize``  Data language mgr.   Dist. mgr.  Deserialize an object.
-``getdesersize`` Data language mgr.   Dist. mgr.  Compute object size for deserialization.
-``init``         Data language mgr.   Sys. init.  Initialize a data language manager.
-``cleanup``      Data language mgr.   Sys. init.  Clean up a data language manager.
-================ ==================== =========== ====================================================
-
-Summary of ownership rules
---------------------------
-
-================= ===============================================================
-Pattern           Ownership rule
-================= ===============================================================
-new(), clone()    Caller of ``new`` receives ownership of new reference.
-wrap()            Caller of ``wrap`` keeps ownership of input object,
-                  receives ownership of the newly created field reference.
-unwrap()          Caller of ``wrap`` transfers ownership of field reference 
-                  to ``unwrap`` (which then calls ``release``), and receives
-                  back ownership of the data object.
-capture()         Caller of ``wrap`` receives ownership of the newly created
-                  field reference; ownership of input object transferred to
-                  the field reference: last ``release`` on the field reference
-                  also deallocates captured object.
-copyref()         Caller of ``copyref`` receives ownership for output reference.
-out()             Ownership of field reference stays in caller.
-out(demit())      Ownership of field reference transferred to ``out``.
-bind()            Ownership of input field reference stays in environment.
-bind(claim())     Ownership of input field reference transferred to caller
-                  of ``bind``.
-================= ===============================================================
-
-
 
 
 Contents of ``langif.h``

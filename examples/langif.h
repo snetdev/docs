@@ -55,22 +55,29 @@ dispatch_t_api {
     fieldref_t  (*wrap)   (dispatch_t*, typeid_t thetype, size_t thesize, void* data);
     fieldref_t  (*capture)(dispatch_t*, typeid_t thetype, size_t thesize, void* data);
     void*       (*unwrap) (dispatch_t*, fieldref_t theref);
+    void*       (*unwrap_release) (dispatch_t*, fieldref_t theref);
 };
 
 /* wrapper macros to simplify usage of the above */
 
-#define svp_bind(x, ...)        x->api->bind(x, __VA_ARGS__)
-#define svp_access(x, y, z)     x->api->access(x, y, z)
-#define svp_clone(x, y)         x->api->clone(x, y)
-#define svp_copyref(x, y)       x->api->copyref(x, y)
-#define svp_getmd(w, x, y, z)   x->api->getmd(w, x, y, z)
-#define svp_log(x, y, z, ...)   x->api->log(x, y, z, __VA_ARGS__)
-#define svp_out(x, ...)         x->api->out(x, __VA_ARGS__)
-#define svp_release(x, y)       x->api->release(x, y)
-#define svp_resize(x, y, z)     x->api->resize(x, y, z)
-#define svp_wrap(w, x, y, z)    x->api->wrap(w, x, y, z)
-#define svp_capture(w, x, y, z) x->api->capture(w, x, y, z)
-#define svp_unwrap(x, y)        x->api->unwrap(x, y)
+#define svp_bind(x, ...)         x->api->bind(x, __VA_ARGS__)
+
+#define svp_out(x, ...)          x->api->out(x, __VA_ARGS__)
+#define svp_log(x, y, z, ...)    x->api->log(x, y, z, __VA_ARGS__)
+
+#define svp_access(x, y, z)      x->api->access(x, y, z)
+#define svp_getmd(w, x, y, z)    x->api->getmd(w, x, y, z)
+#define svp_release(x, y)        x->api->release(x, y)
+#define svp_clone(x, y)          x->api->clone(x, y)
+#define svp_copyref(x, y)        x->api->copyref(x, y)
+
+#define svp_new(x, y, z)         x->api->new(x, y, z)
+#define svp_resize(x, y, z)      x->api->resize(x, y, z)
+
+#define svp_wrap(w, x, y, z)     x->api->wrap(w, x, y, z)
+#define svp_capture(w, x, y, z)  x->api->capture(w, x, y, z)
+#define svp_unwrap(x, y)         x->api->unwrap(x, y)
+#define svp_unwrap_release(x, y) x->api->unwrap_release(x, y)
 
 /* for demit/claim we do some bit fiddling */
 // demit: sets the MSB of the fieldref, out() will check it.
