@@ -135,7 +135,7 @@ be written so:
 
 .. code:: c
 
-   /* box signature:  {<a>} -> {} */
+   /* box signature:  (<a>) -> () */
    int testbox(dispatch_t* cb,  tagval_t a)
    {
       svp_log(cb, LOG_INFO, "textbox received %d", a);
@@ -236,7 +236,7 @@ For example:
 
 .. code:: c
 
-   /* box signature: {string} -> {<t>}  */
+   /* box signature: (string) -> (<t>)  */
    int testfirstnul(dispatch_t* cb, fieldref_t f)
    {
         /* the box tests tests if the first byte of its input
@@ -478,8 +478,8 @@ predefined, to be used with the EMA:
 - ``BYTES_UNALIGNED``: size unit is bytes, no alignment expected.
 
 - ``BYTES_SCALAR_ALIGNED``: size unit is bytes, allocation is scalar
-  aligned (aligned on uintmax_t or long long double, whichever is
-  largest)
+  aligned (aligned on uintmax_t or the largest floating-point type,
+  whichever is largest)
 
 - ``BYTES_CACHE_ALIGNED``: size unit is bytes, allocation is scalar
   and cache line aligned.
@@ -487,7 +487,23 @@ predefined, to be used with the EMA:
 - ``BYTES_PAGE_ALIGNED``: size unit is bytes, allocation page
   aligned.
 
-All these types serialize and deserialize to themselves.
+All these types serialize and deserialize to themselves without any
+value conversion.
+
+The following "semantic" types are also supported:
+
+- ``FLOATS``: size unit is 32 bits, allocation is float-aligned
+  (at least 32 bits, may be larger on some platforms).
+
+- ``DOUBLES``: size unit is 64 bits, allocation is double-aligned
+  (at least 64 bits, may be larger on some platforms).
+
+- ``INT32``: size unit is 32 bits, allocation is 32-bit aligned.
+
+- ``INT64``: size unit is 64 bits, allocation is 64-bit aligned.
+
+These types serialize and deserialize to network-neutral
+representations of the values described by the type name.
 
 Usage in box code
 -----------------
@@ -569,7 +585,7 @@ following code in ``boxes.c``:
 
    #include "langif.h"
    
-   // signature: {<tag>} -> {ll}
+   // signature: (<tag>) -> (ll)
    void t2l(dispatch_t* cb,  tagval_t tag)
    {
        svp_log(cb, LOG_INFO, "hello from t2l, tag = %d", tag);
@@ -810,7 +826,7 @@ with the following structure:
 
 .. code:: c
   
-   // signature: {bytes} -> {<x>, bytes}
+   // signature: (bytes) -> (<x>, bytes)
    int examplebox(dispatch_t* cb,  fieldref_t  x)
    {
       // this box outputs its input record with tag 0,
@@ -835,7 +851,7 @@ About 2a: yields memory leaks if the programmer forgets to call
 
 .. code:: c
 
-   // signature: {bytes} -> {bytes}
+   // signature: (bytes) -> (bytes)
    int examplebox(dispatch_t* cb)
    {
       fieldref_t x = /* ... */;
@@ -855,7 +871,7 @@ references to the same field data. For example:
 
 .. code:: c
 
-   // signature: {bytes} -> {bytes}
+   // signature: (bytes) -> (bytes)
    int examplebox(dispatch_t* cb,  fieldref_t  x)
    {
       for (int i = 0; i < 1000; ++i)
@@ -872,7 +888,7 @@ allocates many objects but only outputs each reference a few times. For example:
 
 .. code:: c
 
-   // signature: {<tag>} -> {bytes}
+   // signature: (<tag>) -> (bytes)
    int examplebox(dispatch_t* cb,  tagval_t tag)
    {
       for (int i = 0; i < 1000; ++i)
@@ -1066,7 +1082,7 @@ For this we propose a solution in two phases:
    +----------------------------------------------+----------------------------------------+
    |.. code:: c                                   |.. code:: c                             |
    |                                              |                                        |
-   |   // signature: {a, <b>} -> ...              |   // signature: {a, <b>} -> ...        |
+   |   // signature: (a, <b>) -> ...              |   // signature: (a, <b>) -> ...        |
    |   int boxfunc(dispatch_t*,                   |  int boxfunc(dispatch_t* cb)           |
    |               fieldref_t a, tagvalue_t b)    |  {                                     |
    |   {                                          |      fieldref_t a;                     |
@@ -1101,7 +1117,7 @@ For this we propose a solution in two phases:
 
    .. code:: c
 
-      // signature: {a, <b>, c} -> ...
+      // signature: (a, <b>, c) -> ...
       int boxfunc(dispatch_t* cb)
       {
           fieldref_t a, c;
@@ -1129,7 +1145,7 @@ fields:
 
 .. code:: c
 
-   // signature: {<tag>} -> {bytes}
+   // signature: (<tag>) -> (bytes)
    int examplebox(dispatch_t* cb,  tagval_t tag)
    {
       for (int i = 0; i < 1000; ++i)
@@ -1150,7 +1166,7 @@ The second example outputs the same input field 1000 times:
 
 .. code:: c
 
-   // signature: {bytes} -> {bytes}
+   // signature: (bytes) -> (bytes)
    int examplebox(dispatch_t* cb,  fieldref_t  x)
    {
       for (int i = 0; i < 1000; ++i)
