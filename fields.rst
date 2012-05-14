@@ -320,7 +320,7 @@ For this we provide the following API in ``datareg.h``:
 
 .. code:: c
 
-   typedef ... regctx_t;
+   typedef ... dataregctx_t;
 
    typedef ... datalangid_t;
 
@@ -338,10 +338,10 @@ For this we provide the following API in ``datareg.h``:
    };
 
    // reg_datamgt: register a data manager.
-   datalangid_t svp_reg_datamgr(regctx_t* reg, struct datamgr_cb* datamgr, const char *humanname);
+   datalangid_t svp_reg_datamgr(dataregctx_t* reg, struct datamgr_cb* datamgr, const char *humanname);
 
 When a language run-time is started up, it can obtain a pointer to a
-``regctx_t``, which it can subsequently use to register itself and its
+``dataregctx_t``, which it can subsequently use to register itself and its
 type management. 
 
 ``reg_datamgr`` does not take ownership of the ``datamgr_cb``
@@ -351,7 +351,7 @@ Example use during initialization:
 
 .. code:: c
 
-   void mylang_start_up(...., regctx_t* reg)
+   void mylang_start_up(...., dataregctx_t* reg)
    {
        struct datamgr_cb mycb = {
             NULL, NULL, /* no init() nor clean-up() for this language */
