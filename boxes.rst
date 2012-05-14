@@ -291,7 +291,8 @@ Scenarios
 Late binding
 ------------
 
-The run-time system can be seen as a program which reads as input an *application description* defined as:
+The run-time system can be seen as a program which reads as input an
+*application description* defined as:
 
 a) a network description and
 b) information about the outermost input and output stream endpoints
@@ -299,7 +300,9 @@ b) information about the outermost input and output stream endpoints
 the RTS program then performs:
 
 1. deployment of the network description into a run-time instance;
-2. binding of the box names mentioned in the network description to a concrete implementation, and dynamic loading of the concrete implementation;
+2. binding of the box names mentioned in the network description to a
+   concrete implementation, and dynamic loading of the concrete
+   implementation;
 3. execution of the run-time instance until the input stream is empty;
 4. flushing the remaining output;
 5. destruction of the run-time instance;
@@ -308,7 +311,8 @@ the RTS program then performs:
 This scenario can be repeated over time in a single RTS process, and
 even carried out concurrently between multiple application descriptions.
 
-The interface proposed here simplifies #2 and #6 by 
+The interface proposed here simplifies #2 and #6 by removing any
+link-time dependencies between box code and the execution environment.
 
 
 Introspection
