@@ -168,7 +168,7 @@ From this we can generate automatically the following:
    static int strcat_wrap(void* unused, dispatch_t* cb)
    {
        fieldref_t f1, f2;
-       svp_bind(cb, &f1, f2);
+       svp_bind(cb, &f1, &f2);
        return strcat_box(cb, f1, f2);
    }
 
