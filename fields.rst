@@ -2,7 +2,7 @@
  Language interface clean-up
 =============================
 
-:Authors: kena, merijn, frank
+:Authors: kena, merijn, frank, clemens
 :Date: May 2012
 
 :Abstract: This note proposes a new API to manage field data,
@@ -156,10 +156,13 @@ We introduce the following:
    // out: emit one output record.
    int svp_out(dispatch_t* hnd, ...);
 
-Each call to the output function produces one record on the default
+   // outv: emit one output record using a named output format.
+   int svp_outv(dispatch_t* hnd, int fmt, ...);
+
+Each call to ``out`` or ``outv`` produces one record on the default
 output stream associated with the context (identified via ``dispatch_t``).
    
-For example, a box function with type ``{<a>} -> {<x>,<y>,<z>}``
+For example, a box function with type ``(<a>) -> (<x>,<y>,<z>)``
 could be written so:
 
 .. code:: c
@@ -175,6 +178,38 @@ could be written so:
              svp_out(cb, a+5, a+5, a+5);
    }
  
+And a box function with type ``(<a>,b,c) -> (b) | (c)``:
+
+.. code:: c
+
+   int testbox(dispatch_t* cb, tagval_t a, fieldref_t b, fieldref_t c)
+   {
+      svp_log(cb, LOG_INFO, "textbox received %d", a);
+      
+      // this box' behavior is to forward its first input
+      // field if the tag is greater than 10, or the 2nd
+      // otherwise.
+ 
+      if (a > 10)   
+         return svp_outv(cb, 0, b);
+      else
+         return svp_outv(cb, 1, c);
+   }
+
+In this example, the 1st output format with label 0 is ``(b)`` and the
+2nd with label 1 is ``(c)``.
+
+For good style ``out`` and ``outv`` should be mutually exclusive: a
+box with a single output type should only use ``out``, and a box with
+multiple out types should only use ``outv``. In the implementation,
+the following holds:
+
+.. code:: c
+  
+   #define svp_out(x, ...) svp_outv(x, 0, __VA_ARGS__)
+
+In other words, ``out`` outputs a record using the first variant output
+type.
 
 Field input
 -----------
@@ -361,7 +396,7 @@ Example use during initialization:
             &mylang_deserialize
             };
 
-       datalangid_t l = svp_reg_datamgr(reg, &mycb);        
+       datalangid_t l = svp_reg_datamgr(reg, &mycb, "mylang");        
 
        /* ... */
     }
@@ -593,6 +628,11 @@ following code in ``boxes.c``:
        // allocation by the "environment"
        fieldref_t f = svp_new(cb, sizeof(long long), BYTES_SCALAR_ALIGNED);
  
+       // fill in the value
+       long long *p;
+       svp_access(cb, f, &p);
+       *p = tag;
+
        // output the field reference
        svp_out(cb, f);
 
