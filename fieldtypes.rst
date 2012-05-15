@@ -33,14 +33,14 @@ reference. This default remains.
 
 In addition to this, we introduce the following 3 formats:
 
-"X:int" : 
+"X.i" : 
    X refers to a scalar integer, large enough to hold a
    64-bit value or a pointer.
 
-"X:float" : 
+"X.f" : 
    X refers to a scalar single-precision IEEE floating-point value (32 bits).
 
-"X:double" : 
+"X.d" : 
    X refers to a scalar double-precision IEEE floating-point value (64 bits).
 
 From the perspective of box typing and combination these should be
@@ -65,7 +65,7 @@ example:
 +--------------------------------------------+------------------------------------------+
 |.. code:: c                                 |.. code:: c                               |
 |                                            |                                          |
-|   // sig: (a:int,b:int) -> (c:int)         |   // sig: (a:int,b:int) -> (c:int)       |
+|   // sig: (a.i,b.i) -> (c.i)               |   // sig: (a.i,b.i) -> (c.i)             |
 |   int add(dispatch_t*cb,                   |   int add(dispatch_t*cb)                 |
 |           intval_t a, intval_t b)          |   {                                      |
 |   {                                        |      intval_t a, b;                      |
@@ -76,7 +76,7 @@ example:
 +--------------------------------------------+------------------------------------------+
 |.. code:: c                                 |.. code:: c                               |
 |                                            |                                          |
-|   // sig: (x:double) -> (a:double,b:int)   |   // sig: (x:double) -> (a:double,b:int) |
+|   // sig: (x.d) -> (a.d,b.i)               |   // sig: (x.d) -> (a.d,b.d)             |
 |   int box_frexp(dispatch_t*cb, double x)   |   int box_frexp(dispatch_t*cb)           |
 |   {                                        |   {                                      |
 |      double mantissa;                      |      double x;                           |
@@ -121,7 +121,7 @@ Why not arrays?
 
    .. code:: c
 
-      // sig: (<sz>, v:float) -> (a)
+      // sig: (<sz>, v.f) -> (a)
       // function: produce an array of sz floats with value v
       int box(dispatch_t* cb, tagval_t sz, float v)
       {
@@ -152,4 +152,45 @@ Type            Description
 ``float``       **(new)** 32-bits (single-precision) FP scalar field, passed by value.
 ``double``      **(new)** 64-bits (double-precision) FP scalar field, passed by value.
 =============== ====================================================================
+
+Open discussion
+===============
+
+A discussion remains on how and where to specify the type
+annotations. The proposal above proposes that:
+
+- concrete types are specified in the same syntax that declares a box;
+
+- that the notation "X.t" is used.
+
+There are  several areas for discussion:
+
+- whether these concrete type annotations should be part of the snet
+  syntax at all. Indeed they do not participate in the snet semantics;
+  they are useful only to an external observer of a running
+  application to inspect the flow of data between components.
+
+
+- whether to annotate at the point of box declaration, or whether to
+  use a separate syntax; for example using a new ``typemap`` syntax::
+
+     box foo : (a) -> (b);
+
+     typemap a -> .i;
+     typemap b -> .d;
+
+  This syntax form could be listed next to the box declaration, or in
+  a separate file that would be loaded when instantiating the network.
+
+- what the syntax should be. Here are the alternatives previously
+  examined:
+
+  - a suffix with a colon, eg ``X:int`` is misleading as it suggests
+    that there is type checking and that many possible types will be
+    available (eg it tempts the user into expecting that ``X:int[10]``
+    works to define an array of ints).
+
+  - a prefix with punctuation, eg ``%X`` to say that X is a
+    double-precision scalar (idea taken from old-school BASIC); bad idea
+    as it would clutter the syntax and make declarations harder to read.
 
