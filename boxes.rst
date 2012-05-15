@@ -25,19 +25,19 @@ to convert the payload to box/entity variables.
 
 The slot types are as follows.
 
-``SLOT_TAG`` :
+``SLOT_TAG`` : 0
     a tag
 
-``SLOT_FIELD_OBJECT`` :
+``SLOT_FIELD_OBJECT`` : 1
     an object reference
 
-``SLOT_SCALAR_INTEGER`` :
+``SLOT_SCALAR_INTEGER`` : 2
     an integer scalar
 
-``SLOT_SCALAR_FLOAT`` :
+``SLOT_SCALAR_FLOAT`` : 3
     a single-precision FP value
 
-``SLOT_SCALAR_DOUBLE`` :
+``SLOT_SCALAR_DOUBLE`` : 4
     a double-precision FP value
 
 
@@ -117,7 +117,7 @@ by the box module loader function, using the following API:
 
 .. code:: c
 
-   boxid_t    svp_reg_box(boxregctx_t* reg, boxmodid_t modid, struct boxapi_cb* box, const char *humanname);
+   boxid_t    svp_reg_box(boxregctx_t* reg, boxmodid_t modid, const struct boxapi_cb* box, const char *humanname);
 
 ``reg_box`` registers a *box API* with the environment, for a given
 box module ID (produced previously by ``reg_boxmod``).
