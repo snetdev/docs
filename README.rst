@@ -1,8 +1,8 @@
-Fine-grained SNet documentation
-===============================
+SNet technical documentation
+============================
 
-This repository contains documentation and small examples / unit
-tests for the SNet technology.
+This repository contains documentation and small examples / unit tests
+for the SNet technology.
 
 We use reStructuredText_, a handy markup language for technical
 documentation. Version 0.9 or later of Python Docutils_ is required

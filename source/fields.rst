@@ -14,8 +14,6 @@
    ownership 2) mandatory passing of the execution context as 1st
    argument to all API calls, not only the SNetOut function.
 
-.. sectnum::
-
 .. contents::
 
 Introduction
