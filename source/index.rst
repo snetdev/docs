@@ -1,15 +1,14 @@
-Welcome to SNet's technical documentation!
-==========================================
+============================================
+ Welcome to SNet's technical documentation!
+============================================
 
 Contents:
 
 .. toctree::
-   :numbered:
    :maxdepth: 2
 
-   fields
-   fieldtypes
-   boxes
+   snet
+   refactor
 
 Indices and tables
 ==================
