@@ -140,7 +140,7 @@ There are multiple possible *evaluation strategies* for an S-Net program:
   This implementation is said to be "process-centric" in that the components
   mostly stay at the same location while the data moves around.
 
-- **Hydra**, which was described in [PH10]_.
+- **Hydra**, details of which can be found in [PH10]_.
 
   In this vision, the entire S-Net program is encoded in a
   function. For every input record, one new task is created to execute
@@ -163,7 +163,7 @@ There are multiple possible *evaluation strategies* for an S-Net program:
      Enschede, the Netherlands, April 2010. URL
      http://doc.utwente.nl/70959/.
 
-- **graph walker**, which was described originally in [JS08]_.
+- **graph walker**, of which an outline can be found in [JS08]_.
 
   In this vision, the S-Net program is stored in memory as a graph of
   components. For every input record, new tasks are created for each
