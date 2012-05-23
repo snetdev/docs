@@ -158,7 +158,7 @@ There are multiple possible *evaluation strategies* for an S-Net program:
   records mostly stay at the same location while the computation
   stages are applied to them.
 
-  .. _[PH10]: Philip Kaj Ferdinand Hölzenspies. On run-time
+  .. [PH10] Philip Kaj Ferdinand Hölzenspies. On run-time
      exploitation of concurrency. PhD thesis, University of Twente,
      Enschede, the Netherlands, April 2010. URL
      http://doc.utwente.nl/70959/.
@@ -175,7 +175,7 @@ There are multiple possible *evaluation strategies* for an S-Net program:
 
   This implementation is also "data-centric".
 
-  .. _[JS08]: Chris Jesshope and Alex Shafarenko. Concurrency
+  .. [JS08] Chris Jesshope and Alex Shafarenko. Concurrency
      Engineering. In Proc. 13th IEEE Asia-Pacific Computer Systems
      Architecture Conference, 2008. ISBN 978-1-4244-2683-6.
 
