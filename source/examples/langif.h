@@ -36,6 +36,7 @@ dispatch_t_api {
 
     /* general output functions */
     int       (*out)  (dispatch_t*, ...);
+    int       (*outv) (dispatch_t*, int fmt, ...);
     void      (*log)  (dispatch_t*, int loglevel, const char *fmt, ...);
     outref_t  (*demit)(dispatch_t*, fieldref_t r);
    
@@ -52,8 +53,8 @@ dispatch_t_api {
     int         (*resize) (dispatch_t*, fieldref_t theref, size_t newsize);
 
     /* LMA functions */
-    fieldref_t  (*wrap)   (dispatch_t*, typeid_t thetype, size_t thesize, void* data);
-    fieldref_t  (*capture)(dispatch_t*, typeid_t thetype, size_t thesize, void* data);
+    fieldref_t  (*wrap)   (dispatch_t*, typeid_t thetype, void* data);
+    fieldref_t  (*capture)(dispatch_t*, typeid_t thetype, void* data);
     void*       (*unwrap) (dispatch_t*, fieldref_t theref);
     void*       (*unwrap_release) (dispatch_t*, fieldref_t theref);
 };

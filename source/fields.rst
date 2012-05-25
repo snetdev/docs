@@ -12,7 +12,7 @@
    in technical meetings. It also ensures that all APIs can be
    overridden at run-time. The main changes are 1) clear semantics for
    ownership 2) mandatory passing of the execution context as 1st
-   argument to all API calls, not only the SNetOut function.
+   argument to all API calls, not only the ``SNetOut`` function.
 
 .. contents::
 
@@ -123,7 +123,7 @@ We introduce the following declaration in ``langif.h``:
    #define  LOG_FATAL    50   // unexpected condition, behavior undefined
  
    /* API accessors */
-   int svp_log(dispatch_t*, int, const char*, ...);
+   int snet_log(dispatch_t*, int, const char*, ...);
 
 The logging function reports messages on a logging channel specific to
 the context where it is called (identified via ``dispatch_t``).
@@ -136,7 +136,7 @@ be written so:
    /* box signature:  (<a>) -> () */
    int testbox(dispatch_t* cb,  tagval_t a)
    {
-      svp_log(cb, LOG_INFO, "textbox received %d", a);
+      snet_log(cb, LOG_INFO, "textbox received %d", a);
 
       return 0;      
    }
@@ -152,10 +152,13 @@ We introduce the following:
 .. code:: c
 
    // out: emit one output record.
-   int svp_out(dispatch_t* hnd, ...);
+   int snet_out(dispatch_t* hnd, ...);
 
    // outv: emit one output record using a named output format.
-   int svp_outv(dispatch_t* hnd, int fmt, ...);
+   int snet_outv(dispatch_t* hnd, int fmt, ...);
+
+   // outv: emit one output record using explicit field/tag names
+   int snet_outf(dispatch_t* hnd, const char* labels, ...);
 
 Each call to ``out`` or ``outv`` produces one record on the default
 output stream associated with the context (identified via ``dispatch_t``).
@@ -167,13 +170,13 @@ could be written so:
 
    int testbox(dispatch_t* cb,  tagval_t a)
    {
-      svp_log(cb, LOG_INFO, "textbox received %d", a);
+      snet_log(cb, LOG_INFO, "textbox received %d", a);
       
       // this box' behavior is to forward 3 copies of the tag
       // and then its value +5, in two separate records.
  
-      return svp_out(cb, a, a, a) &&
-             svp_out(cb, a+5, a+5, a+5);
+      return snet_out(cb, a, a, a) &&
+             snet_out(cb, a+5, a+5, a+5);
    }
  
 And a box function with type ``(<a>,b,c) -> (b) | (c)``:
@@ -182,29 +185,39 @@ And a box function with type ``(<a>,b,c) -> (b) | (c)``:
 
    int testbox(dispatch_t* cb, tagval_t a, fieldref_t b, fieldref_t c)
    {
-      svp_log(cb, LOG_INFO, "textbox received %d", a);
+      snet_log(cb, LOG_INFO, "textbox received %d", a);
       
       // this box' behavior is to forward its first input
       // field if the tag is greater than 10, or the 2nd
       // otherwise.
  
       if (a > 10)   
-         return svp_outv(cb, 0, b);
+         return snet_outv(cb, 0, b);
       else
-         return svp_outv(cb, 1, c);
+         return snet_outv(cb, 1, c);
    }
+
+Or alternatively:
+
+.. code:: c
+
+      if (a > 10)   
+         return snet_outf(cb, "b", b);
+      else
+         return snet_outf(cb, "c", c);
+
 
 In this example, the 1st output format with label 0 is ``(b)`` and the
 2nd with label 1 is ``(c)``.
 
-For good style ``out`` and ``outv`` should be mutually exclusive: a
-box with a single output type should only use ``out``, and a box with
-multiple out types should only use ``outv``. In the implementation,
-the following holds:
+For good style ``out`` and ``outv``/``outf`` should be mutually
+exclusive: a box with a single output type should only use ``out``,
+and a box with multiple out types should only use ``outv``. In the
+implementation, the following holds:
 
 .. code:: c
   
-   #define svp_out(x, ...) svp_outv(x, 0, __VA_ARGS__)
+   #define snet_out(x, ...) snet_outv(x, 0, __VA_ARGS__)
 
 In other words, ``out`` outputs a record using the first variant output
 type.
@@ -224,11 +237,11 @@ We introduce the following in ``langif.h``:
    typedef ... typeid_t;
  
    // access: retrieve a pointer to the actual data.
-   int svp_access(dispatch_t*, fieldref_t theref, void **ptr);
+   int snet_access(dispatch_t*, fieldref_t theref, void **ptr);
 
    // getmd: retrieve field metadata.
-   int svp_getmd (dispatch_t*, fieldref_t theref, 
-                  size_t *thesize, typeid_t *thetype, size_t *realsize);
+   int snet_getmd (dispatch_t*, fieldref_t theref, 
+                   size_t *thesize, typeid_t *thetype, size_t *realsize);
 
 Semantics:
 
@@ -278,19 +291,19 @@ For example:
 
         // retrieve and test the size
         size_t s;
-        svp_getmd(cb, f, &s, 0, 0);
+        snet_getmd(cb, f, &s, 0, 0);
         if (s == 0)
         {
-           svp_log(cb, LOG_INFO, "no data");
+           snet_log(cb, LOG_INFO, "no data");
            return 0;
         }
         
         // get access to the data
         char *p;
-        svp_access(cb, f, &p);
+        snet_access(cb, f, &p);
 
         // test and output        
-        return svp_out(cb, (tagval_t)(p[0] == '\0'));
+        return snet_out(cb, (tagval_t)(p[0] == '\0'));
    }
 
 Field database
@@ -313,7 +326,7 @@ We provide the following:
 
 .. code:: c
 
-   fieldref_t  svp_copyref(dispatch_t* cb, fieldref_t r);
+   fieldref_t  snet_copyref(dispatch_t* cb, fieldref_t r);
  
 For each call to ``copyref``, ``release`` must be called on the
 returned reference.
@@ -452,7 +465,7 @@ We extend ``datareg.h`` as follows:
 
 .. code:: c
 
-   void svp_reg_ema_type(regctx_t*, datalangid_t thelang,
+   int svp_reg_ema_typemgr(regctx_t*, datalangid_t thelang,
                                     typeid_t thetype, const char *humanname,
                                     struct ema_typemgr_cb* tcb);
    };
@@ -546,16 +559,16 @@ For this purpose the ``dispatch_t`` API is extended as follows:
 .. code:: c
 
    // new: creates a fresh new object of the specified type and size.
-   fieldref_t svp_new(dispatch_t*, size_t thesize, typeid_t thetype);
+   fieldref_t snet_new(dispatch_t*, typeid_t thetype, size_t thesize);
  
    // release: drop the specified reference.
-   void svp_release(dispatch_t*, fieldref_t theref);
+   void snet_release(dispatch_t*, fieldref_t theref);
  
    // resize: modify the logical size of the object.
-   int svp_resize(dispatch_t*, fieldref_t theref, size_t newsize);
+   int snet_resize(dispatch_t*, fieldref_t theref, size_t newsize);
  
    // clone: create a fresh copy of the data with its own reference
-   void svp_clone(dispatch_t*, fieldref_t theref);
+   void snet_clone(dispatch_t*, fieldref_t theref);
    
 Semantics:
 
@@ -621,21 +634,21 @@ following code in ``boxes.c``:
    // signature: (<tag>) -> (ll)
    void t2l(dispatch_t* cb,  tagval_t tag)
    {
-       svp_log(cb, LOG_INFO, "hello from t2l, tag = %d", tag);
+       snet_log(cb, LOG_INFO, "hello from t2l, tag = %d", tag);
  
        // allocation by the "environment"
-       fieldref_t f = svp_new(cb, sizeof(long long), BYTES_SCALAR_ALIGNED);
+       fieldref_t f = snet_new(cb, sizeof(long long), BYTES_SCALAR_ALIGNED);
  
        // fill in the value
        long long *p;
-       svp_access(cb, f, &p);
+       snet_access(cb, f, &p);
        *p = tag;
 
        // output the field reference
-       svp_out(cb, f);
+       snet_out(cb, f);
 
        // release the field reference
-       svp_release(cb, f);
+       snet_release(cb, f);
 
        return 0;
    }
@@ -666,29 +679,29 @@ In ``datareg.h``:
 
 .. code:: c
 
-   void svp_reg_lma_typemgr(regctx_t*, datalangid_t thelang,
-                                       typeid_t thetype, const char *humanname,
-                                       struct lma_typemgr_cb* tcb);
+   int svp_reg_lma_typemgr(regctx_t*, datalangid_t thelang,
+                                      typeid_t thetype, const char *humanname,
+                                      size_t n_container_slots, struct lma_typemgr_cb* tcb);
 
    struct lma_typemgr_cb {
 
      // increment the reference counter.
-     void    (*incref)   (void* langctx, typeid_t thetype, void* data);
+     void    (*incref)   (void* langctx, typeid_t thetype, void* container[]);
 
      // decrement the reference counter, deallocate if reaches 0.
      // return 1 if it was the last reference, ie effective deallocation took place.
-     int     (*decref)   (void* langctx, typeid_t thetype, void* data);
+     int     (*decref)   (void* langctx, typeid_t thetype, void* container[]);
 
      // duplicate the object; new object has ref count 1
-     void*   (*copy)     (void* langctx, typeid_t thetype, void* data);
+     void    (*copy)     (void* langctx, typeid_t thetype, void* const src_container[], void* dst_container[]);
 
      // test the reference counter.
      // return 1 if is the last reference, 0 if there are more references.
-     void    (*testref)  (void* langctx, typeid_t thetype, void* data);
+     void    (*testref)  (void* langctx, typeid_t thetype, void* container[]);
 
      // report an estimate of the size in memory taken by the item of data.
      // this is used for monitoring purposes.
-     size_t  (*getsize)  (void* langctx, typeid_t thetype, void* data);
+     size_t  (*getsize)  (void* langctx, typeid_t thetype, void* container[]);
 
    };
 
@@ -702,11 +715,11 @@ For the LMA the ``dispatch_t`` API is extended as follows:
 
 .. code:: c
 
-   fieldref_t svp_wrap(dispatch_t*, typeid_t thetype, void* data);
-   fieldref_t svp_capture(dispatch_t*, typeid_t thetype, void* data);
+   fieldref_t snet_wrap(dispatch_t*, typeid_t thetype, ...);
+   fieldref_t snet_capture(dispatch_t*, typeid_t thetype, ...);
 
-   void*      svp_unwrap(dispatch_t*, fieldref_t ref);
-   void*      svp_unwrap_release(dispatch_t*, fieldref_t ref);
+   void      snet_unwrap(dispatch_t*, fieldref_t ref, ...);
+   void      snet_unwrap_release(dispatch_t*, fieldref_t ref, ...);
 
 Semantics:
 
@@ -724,9 +737,9 @@ Semantics:
   
   .. code:: c
   
-     fieldref_t svp_capture(dispatch_t* cb, typeid_t thetype, void* data)
+     fieldref_t snet_capture(dispatch_t* cb, typeid_t thetype, void* data)
      {
-         fieldref_t f = svp_wrap(cb, thetype, data);
+         fieldref_t f = snet_wrap(cb, thetype, data);
          /* language-specific decref(data) */
          return f;
      }
@@ -741,12 +754,12 @@ Semantics:
   
   .. code:: c
   
-     void* svp_unwrap(dispatch_t* cb, fieldref_t f)
+     void snet_unwrap(dispatch_t* cb, fieldref_t f, void* *ptr)
      {
          void* data;
-         svp_access(cb, f, &data);
+         snet_access(cb, f, &data);
          /* language-specific incref(data) */
-         return data;
+         *ptr = data;
      }
    
 
@@ -762,13 +775,13 @@ Semantics:
   
   .. code:: c
   
-     void* svp_unwrap_release(dispatch_t* cb, fieldref_t f)
+     void snet_unwrap_release(dispatch_t* cb, fieldref_t f, void* *ptr)
      {
          void* data;
-         svp_access(cb, f, &data);
+         snet_access(cb, f, &data);
          /* language-specific incref(data) */
-         svp_release(cb, f);
-         return data;
+         snet_release(cb, f);
+         *ptr = data;
      }
    
 
@@ -787,9 +800,9 @@ The following box emits a freshly created object:
    {
        void *newdata = /* ... alloc ... */;
 
-       fieldref_t r = svp_wrap(cb, MYTYPE, newdata);
-       svp_out(cb, r);
-       svp_release(cb, r);
+       fieldref_t r = snet_wrap(cb, MYTYPE, newdata);
+       snet_out(cb, r);
+       snet_release(cb, r);
 
        /* language-specific decref(newdata) */
 
@@ -813,12 +826,12 @@ To fully transfer ownership ``capture`` can be used:
    {
        void *newdata = /* ... alloc ... */;
 
-       fieldref_t r = svp_capture(cb, MYTYPE, newdata);
-       svp_out(cb, r);
+       fieldref_t r = snet_capture(cb, MYTYPE, newdata);
+       snet_out(cb, r);
 
        /* the following call to release() also deallocates
           the object, since capture() has taken ownership. */
-       svp_release(cb, r);
+       snet_release(cb, r);
 
        /* here decref(newdata) is not needed any more. */
 
@@ -832,13 +845,14 @@ it internally, then emits it again as output:
 
    int box_func3(dispatch_t* cb, fieldref_t x)
    {
-      void* xdata = svp_unwrap(cb, x);
+      void* xdata;
+      snet_unwrap(cb, x, &xdata);
 
       /* ... process via xdata internally ... */
 
-      fieldref_t r = svp_capture(cb, xdata);
-      svp_out(cb, r);
-      svp_release(cb, r);
+      fieldref_t r = snet_capture(cb, xdata);
+      snet_out(cb, r);
+      snet_release(cb, r);
  
       return 0;
    }
@@ -886,12 +900,12 @@ with the following structure:
    {
       // this box outputs its input record with tag 0,
       // then 1000 fresh records with tag 1.
-      svp_out(cb, 0, x);
+      snet_out(cb, 0, x);
 
       for (int i = 0; i < 1000; ++i)
       { 
-           fieldref_t f = svp_new(cb, 1, BYTES_UNALIGNED);
-           svp_out(cb, 1, f);
+           fieldref_t f = snet_new(cb, 1, BYTES_UNALIGNED);
+           snet_out(cb, 1, f);
       }
       return 0;
    }
@@ -910,8 +924,8 @@ About 2a: yields memory leaks if the programmer forgets to call
    int examplebox(dispatch_t* cb)
    {
       fieldref_t x = /* ... */;
-      svp_out(x);
-      svp_release(x);
+      snet_out(x);
+      snet_release(x);
    }
 
 In this example, the continuation of ``examplebox`` in the application
@@ -930,7 +944,7 @@ references to the same field data. For example:
    int examplebox(dispatch_t* cb,  fieldref_t  x)
    {
       for (int i = 0; i < 1000; ++i)
-           svp_out(cb, x);
+           snet_out(cb, x);
 
       return 0;
    }
@@ -948,8 +962,8 @@ allocates many objects but only outputs each reference a few times. For example:
    {
       for (int i = 0; i < 1000; ++i)
       { 
-           fieldref_t f = svp_new(cb, 1, BYTES_UNALIGNED);
-           svp_out(cb, f);
+           fieldref_t f = snet_new(cb, 1, BYTES_UNALIGNED);
+           snet_out(cb, f);
       }
       return 0;
    }
@@ -985,93 +999,94 @@ By default, the following semantics apply:
 
 The following examples illustrate:
 
-+-----------------------------------------+-----------------------------------------+
-|Correct                                  |Incorrect                                |
-+-----------------------------------------+-----------------------------------------+
-|.. code:: c                              |.. code:: c                              |
-|                                         |                                         |
-|   int f1(dispatch_t*, fieldref_t r)     |   int f1x(dispatch_t* cb, fieldref_t r) |
-|   {                                     |   {                                     |
-|     /* do nothing */                    |      svp_release(cb, r);                |
-|     return 0;                           |      return 0;                          |
-|   }                                     |   }                                     |
-|                                         |                                         |
-|                                         |(extraneous release: both explicily in   |
-|                                         |``f1x`` and when ``f1x`` terminates by   |
-|                                         |the environment.)                        |
-+-----------------------------------------+-----------------------------------------+
-|.. code:: c                              |.. code:: c                              |
-|                                         |                                         |
-|   int f2(dispatch_t* cb)                |   int f2x(dispatch_t* cb)               |
-|   {                                     |   {                                     |
-|       fieldref_t r = svp_new(...);      |      fieldref_t r = svp_new(...);       |
-|       /* ... populate r ... */          |      /* ... populate r ... */           |
-|       svp_out(cb, r);                   |      svp_out(cb, r);                    |
-|       svp_out(cb, r);                   |      svp_out(cb, r);                    |
-|       svp_release(r);                   |      return 0;                          |
-|       return 0;                         |   }                                     |
-|   }                                     |                                         | 
-|                                         |(memory leak: release missing after last |
-|(possible inefficiency: the object       |call to ``out``)                         |
-|persists until the last call to ``out``  |                                         |
-|completes, even though it is not needed  |                                         |
-|in ``f2`` any more at the moment this    |                                         |
-|last call starts)                        |                                         |
-+-----------------------------------------+-----------------------------------------+
-|.. code:: c                              |.. code:: c                              |
-|                                         |                                         |
-|   int f3(dispatch_t* cb)                |  int f3x(dispatch_t* cb)                |
-|   {                                     |  {                                      |
-|       void *p = /* private... */;       |      void *p = /* private... */;        |
-|       fieldref_t r;                     |      svp_out(cb,                        |
-|       r = svp_capture(cb, ..., p);      |              svp_capture(cb, ..., p));  |
-|       svp_out(cb, r);                   |      return 0;                          |
-|       svp_release(r);                   |  }                                      |
-|       return 0;                         |                                         |
-|   }                                     |(memory leak: release missing after call |
-|                                         |to ``out``)                              |
-|(possible inefficiency: the object       |                                         |
-|persists until the call to ``out``       |                                         |
-|completes, even though it is not needed  |                                         |
-|in ``f3`` any more at the moment this    |                                         |
-|call starts)                             |                                         |
-+-----------------------------------------+-----------------------------------------+
-|.. code:: c                              |.. code:: c                              |
-|                                         |                                         |
-|   // sig: (a) -> (<b>)                  |   // sig: (a) -> (<b>)                  |
-|   int f4(dispatch_t* cb, fieldref_t r)  |   int f4x(dispatch_t* cb, fieldref_t r) |
-|   {                                     |   {                                     |
-|      void *p = svp_unwrap(cb, r);       |      void *p;                           |
-|                                         |      p = svp_unwrap_release(cb, r);     |
-|      /* ... use p ... */                |                                         |
-|                                         |      /* ... use p ... */                |
-|      /* language-specific decref(p) */  |                                         |
-|                                         |      /* language-specific decref(p) */  |
-|      return svp_out(cb, (tagval_t)123); |                                         |
-|   }                                     |      return svp_out(cb, (tagval_t)123); |
-|                                         |   }                                     |
-|(possible inefficiency: the object       |                                         |
-|persists until ``f4`` terminates, for    |(extraneous release: both explicitly in  |
-|``unwrap`` keeps ownership of the object |``f4x` by ``unwrap_release`` and when    |
-|in the field reference, and the field    |``f4x`` terminates by the environment)   |
-|reference is only released when the box  |                                         |
-|terminates)                              |                                         |
-+-----------------------------------------+-----------------------------------------+
-|.. code:: c                              |                                         |
-|                                         |                                         |
-|   int f5(dispatch_t* cb, fieldref_t r)  |                                         |
-|   {                                     |                                         |
-|       return svp_out(cb, r) &&          |                                         |
-|              svp_out(cb, r);            |                                         |
-|   }                                     |                                         |
-|                                         |                                         |
-|(possible inefficiency: the object       |                                         |
-|persists until the box terminates, even  |                                         |
-|though it is not needed in ``f5`` any    |                                         |
-|more at the moment the last call to      |                                         |
-|``out`` starts)                          |                                         |
-|                                         |                                         |
-+-----------------------------------------+-----------------------------------------+
++------------------------------------------+------------------------------------------+
+|Correct                                   |Incorrect                                 |
++------------------------------------------+------------------------------------------+
+|.. code:: c                               |.. code:: c                               |
+|                                          |                                          |
+|   int f1(dispatch_t*, fieldref_t r)      |   int f1x(dispatch_t* cb, fieldref_t r)  |
+|   {                                      |   {                                      |
+|     /* do nothing */                     |      snet_release(cb, r);                |
+|     return 0;                            |      return 0;                           |
+|   }                                      |   }                                      |
+|                                          |                                          |
+|                                          |(extraneous release: both explicily in    |
+|                                          |``f1x`` and when ``f1x`` terminates by the|
+|                                          |environment.)                             |
++------------------------------------------+------------------------------------------+
+|.. code:: c                               |.. code:: c                               |
+|                                          |                                          |
+|   int f2(dispatch_t* cb)                 |   int f2x(dispatch_t* cb)                |
+|   {                                      |   {                                      |
+|       fieldref_t r = snet_new(...);      |      fieldref_t r = snet_new(...);       |
+|       /* ... populate r ... */           |      /* ... populate r ... */            |
+|       snet_out(cb, r);                   |      snet_out(cb, r);                    |
+|       snet_out(cb, r);                   |      snet_out(cb, r);                    |
+|       snet_release(r);                   |      return 0;                           |
+|       return 0;                          |   }                                      |
+|   }                                      |                                          | 
+|                                          |(memory leak: release missing after last  |
+|(possible inefficiency: the object        |call to ``out``)                          |
+|persists until the last call to ``out``   |                                          |
+|completes, even though it is not needed in|                                          |
+|``f2`` any more at the moment this last   |                                          |
+|call starts)                              |                                          |
++------------------------------------------+------------------------------------------+
+|.. code:: c                               |.. code:: c                               |
+|                                          |                                          |
+|   int f3(dispatch_t* cb)                 |  int f3x(dispatch_t* cb)                 |
+|   {                                      |  {                                       |
+|       void *p = /* private... */;        |      void *p = /* private... */;         |
+|       fieldref_t r;                      |      snet_out(cb,                        |
+|       r = snet_capture(cb, ..., p);      |              snet_capture(cb, ..., p));  |
+|       snet_out(cb, r);                   |      return 0;                           |
+|       snet_release(r);                   |  }                                       |
+|       return 0;                          |                                          |
+|   }                                      |(memory leak: release missing after call  |
+|                                          |to ``out``)                               |
+|(possible inefficiency: the object        |                                          |
+|persists until the call to ``out``        |                                          |
+|completes, even though it is not needed in|                                          |
+|``f3`` any more at the moment this call   |                                          |
+|starts)                                   |                                          |
++------------------------------------------+------------------------------------------+
+|.. code:: c                               |.. code:: c                               |
+|                                          |                                          |
+|   // sig: (a) -> (<b>)                   |   // sig: (a) -> (<b>)                   |
+|   int f4(dispatch_t* cb, fieldref_t r)   |   int f4x(dispatch_t* cb, fieldref_t r)  |
+|   {                                      |   {                                      |
+|      void *p;                            |      void *p;                            |
+|      snet_unwrap(cb, r, &p);             |      snet_unwrap_release(cb, r, &p);     |
+|                                          |                                          |
+|      /* ... use p ... */                 |      /* ... use p ... */                 |
+|                                          |                                          |
+|      /* language-specific decref(p) */   |      /* language-specific decref(p) */   |
+|                                          |                                          |
+|      return snet_out(cb, (tagval_t)123); |      return snet_out(cb, (tagval_t)123); |
+|   }                                      |   }                                      |
+|                                          |                                          |
+|(possible inefficiency: the object        |(extraneous release: both explicitly in   |
+|persists until ``f4`` terminates, for     |``f4x` by ``unwrap_release`` and when     |
+|``unwrap`` keeps ownership of the object  |``f4x`` terminates by the environment)    |
+|in the field reference, and the field     |                                          |
+|reference is only released when the box   |                                          |
+|terminates)                               |                                          |
++------------------------------------------+------------------------------------------+
+|.. code:: c                               |                                          |
+|                                          |                                          |
+|   int f5(dispatch_t* cb, fieldref_t r)   |                                          |
+|   {                                      |                                          |
+|       return snet_out(cb, r) &&          |                                          |
+|              snet_out(cb, r);            |                                          |
+|   }                                      |                                          |
+|                                          |                                          |
+|(possible inefficiency: the object        |                                          |
+|persists until the box terminates,        |                                          |
+|although it is not needed in ``f5`` any   |                                          |
+|more at the moment the last call to       |                                          |
+|``out`` starts)                           |                                          |
+|                                          |                                          |
++------------------------------------------+------------------------------------------+
 
 Ownership override for output fields
 ````````````````````````````````````
@@ -1086,7 +1101,7 @@ For this we can use the following:
  
    typedef ... outref_t;
 
-   outref_t svp_demit(dispatch_t* cb, fieldref_t r);
+   outref_t snet_demit(dispatch_t* cb, fieldref_t r);
 
 The ``demit`` API returns a value suitable for use as argument to the
 ``out`` API, which says to ``out`` to "take ownership" of the
@@ -1099,8 +1114,8 @@ For example:
 
   int testbox(dispatch_t* cb)
   {
-      fieldref_t r = svp_capture(cb, ...);
-      svp_out(cb, svp_demit(cb, r));
+      fieldref_t r = snet_capture(cb, ...);
+      snet_out(cb, snet_demit(cb, r));
       /* no need to release r here */
       return 0;
   }
@@ -1109,12 +1124,12 @@ This enables the following syntax shortcut, useful for LMA users:
 
 .. code:: c
 
-  #define svp_capture_demit(x, y, z, t) svp_demit(x, svp_capture(x, y, z, t))
+  #define snet_capture_demit(x, y, z, t) snet_demit(x, snet_capture(x, y, z, t))
 
   int testbox(dispatch_t* cb)
   {
       void *p = /* private... */;
-      return svp_out(cb, svp_capture_demit(cb, ..., p));
+      return snet_out(cb, snet_capture_demit(cb, ..., p));
   }
 
 Note that it is not possible to yield ownership of an input argument this way;
@@ -1124,7 +1139,7 @@ in particular the following example is invalid:
 
   int testbox(dispatch_t* cb, fieldref_t r)
   {
-      return svp_out(cb, svp_demit(r));
+      return snet_out(cb, snet_demit(r));
   }
 
 This is invalid because the caller of ``testbox`` will call
@@ -1165,7 +1180,7 @@ For this we propose a solution in two phases:
    |               fieldref_t a, tagvalue_t b)    |  {                                     |
    |   {                                          |      fieldref_t a;                     |
    |       /* ... use a, b ... */                 |      tagvalue_t b;                     |
-   |       return 0;                              |      svp_bind(cb, &a, &b);             |
+   |       return 0;                              |      snet_bind(cb, &a, &b);            |
    |   }                                          |                                        |
    |                                              |      /* ... use a, b ... */            |
    |                                              |      return 0;                         |
@@ -1177,7 +1192,7 @@ For this we propose a solution in two phases:
   
    .. code:: c
  
-      void svp_bind(dispatch_t*, ...);
+      void snet_bind(dispatch_t*, ...);
  
    Which binds the variables passed by reference to their corresponding
    input record slots.
@@ -1189,7 +1204,7 @@ For this we propose a solution in two phases:
 
       typedef ... claimref_t;
      
-      claimref_t* svp_claim(dispatch_t*, fieldref_t *var);
+      claimref_t* snet_claim(dispatch_t*, fieldref_t *var);
 
    This can be then used as follows:
 
@@ -1202,11 +1217,11 @@ For this we propose a solution in two phases:
           tagvalue_t b;
 
           // want to claim c, but not a:
-          svp_bind(cb, &a, &b, svp_claim(cb, &c));
+          snet_bind(cb, &a, &b, snet_claim(cb, &c));
       
           /* ... use a, b ... */
 
-          svp_release(cb, c); // because c has been claimed
+          snet_release(cb, c); // because c has been claimed
           return 0;
       }
     
@@ -1228,8 +1243,8 @@ fields:
    {
       for (int i = 0; i < 1000; ++i)
       { 
-           fieldref_t f = svp_new(cb, 1, BYTES_UNALIGNED);            
-           svp_out(cb, svp_demit(cb, f));
+           fieldref_t f = snet_new(cb, 1, BYTES_UNALIGNED);            
+           snet_out(cb, snet_demit(cb, f));
       }
 
       return 0; 
@@ -1248,7 +1263,7 @@ The second example outputs the same input field 1000 times:
    int examplebox(dispatch_t* cb,  fieldref_t  x)
    {
       for (int i = 0; i < 1000; ++i)
-           svp_out(cb, x);
+           snet_out(cb, x);
 
       return 0;
    }
@@ -1257,39 +1272,39 @@ Third example: a box outputs a modified copy of its input. We want to
 optimize for the case where the input storage can be directly
 modified. 
  
-+----------------------------------------+----------------------------------------+----------------------------------------+
-|Incorrect                               |Correct: "ext bind", unoptimized        |Correct: "self bind", preferred         |
-+----------------------------------------+----------------------------------------+----------------------------------------+
-|.. code:: c                             |.. code:: c                             |.. code:: c                             |
-|                                        |                                        |                                        |
-|   int boxfunc(dispatch_t* cb,          |   int boxfunc(dispatch_t* cb,          |   int boxfunc(dispatch_t* cb)          |
-|               fieldref_t x)            |               fieldref_t xin)          |   {                                    |
-|   {                                    |   {                                    |      fieldref_t x;                     |
-|     void *ptr;                         |     void *ptr;                         |      void* ptr;                        |
-|     int rw = svp_access(cb, x, &ptr);  |     outref_t x = xin;                  |                                        |
-|     if (!rw) {                         |     int rw = svp_access(cb, x, &ptr);  |      svp_bind(cb, svp_claim(&x));      |
-|       // can't write, so make a copy.  |     if (!rw) {                         |                                        |
-|       x = svp_clone(cb, x);            |       // can't write, so make a copy.  |      int rw = svp_access(cb, x, &ptr); |
-|       svp_access(cb, x, &ptr);         |       x = svp_clone(cb, x);            |      if (!rw) {                        |
-|     }                                  |       svp_access(cb, x, &ptr);         |         fieldref_t y;                  |
-|                                        |                                        |         y = svp_clone(cb, x);          |
-|     /* ... use ptr here ... */         |       // demit the copy, so that       |         svp_access(cb, y, &ptr);       |
-|                                        |       // out() below will take it.     |                                        |
-|     return svp_out(cb, x);             |       x = sp_demit(cb, x);             |         // release the original.       |
-|   }                                    |     }                                  |         svp_release(cb, x);            |
-|                                        |                                        |         x = y;                         |
-|This is incorrect, because if ``clone`` |     /* ... use ptr here ... */         |      }                                 |
-|is called the corresponding object will |                                        |                                        |
-|never be deallocated. This is because   |     return svp_out(cb, x);             |      /* ... use ptr here ...*/         |
-|the environment only calls ``release``  |   }                                    |                                        |
-|automaticaly on the fields that arrive  |                                        |      return svp_out(cb,                |
-|as input, not those generated by        |This is "unoptimized" because the       |                     svp_demit(cb, x)); |
-|the box                                 |lifespan of the original ``xin`` object |   }                                    |
-|code.                                   |extends until ``boxfunc`` terminates,   |                                        |
-|                                        |although it is not needed past the call |Here the input object is released early |
-|                                        |to ``clone``.                           |when ``clone`` is used.                 |
-|                                        |                                        |                                        |
-+----------------------------------------+----------------------------------------+----------------------------------------+
++----------------------------------------+----------------------------------------+-----------------------------------------+
+|Incorrect                               |Correct: "ext bind", unoptimized        |Correct: "self bind", preferred          |
++----------------------------------------+----------------------------------------+-----------------------------------------+
+|.. code:: c                             |.. code:: c                             |.. code:: c                              |
+|                                        |                                        |                                         |
+|   int boxfunc(dispatch_t* cb,          |   int boxfunc(dispatch_t* cb,          |   int boxfunc(dispatch_t* cb)           |
+|               fieldref_t x)            |               fieldref_t xin)          |   {                                     |
+|   {                                    |   {                                    |      fieldref_t x;                      |
+|     void *ptr;                         |     void *ptr;                         |      void* ptr;                         |
+|     int rw = snet_access(cb, x, &ptr); |     outref_t x = xin;                  |                                         |
+|     if (!rw) {                         |     int rw = snet_access(cb, x, &ptr); |      snet_bind(cb, snet_claim(&x));     |
+|       // can't write, so make a copy.  |     if (!rw) {                         |                                         |
+|       x = snet_clone(cb, x);           |       // can't write, so make a copy.  |      int rw = snet_access(cb, x, &ptr); |
+|       snet_access(cb, x, &ptr);        |       x = snet_clone(cb, x);           |      if (!rw) {                         |
+|     }                                  |       snet_access(cb, x, &ptr);        |         fieldref_t y;                   |
+|                                        |                                        |         y = snet_clone(cb, x);          |
+|     /* ... use ptr here ... */         |       // demit the copy, so that       |         snet_access(cb, y, &ptr);       |
+|                                        |       // out() below will take it.     |                                         |
+|     return snet_out(cb, x);            |       x = sp_demit(cb, x);             |         // release the original.        |
+|   }                                    |     }                                  |         snet_release(cb, x);            |
+|                                        |                                        |         x = y;                          |
+|This is incorrect, because if ``clone`` |     /* ... use ptr here ... */         |      }                                  |
+|is called the corresponding object will |                                        |                                         |
+|never be deallocated. This is because   |     return snet_out(cb, x);            |      /* ... use ptr here ...*/          |
+|the environment only calls ``release``  |   }                                    |                                         |
+|automaticaly on the fields that arrive  |                                        |      return snet_out(cb,                |
+|as input, not those generated by        |This is "unoptimized" because the       |                     snet_demit(cb, x)); |
+|the box                                 |lifespan of the original ``xin`` object |   }                                     |
+|code.                                   |extends until ``boxfunc`` terminates,   |                                         |
+|                                        |although it is not needed past the call |Here the input object is released early  |
+|                                        |to ``clone``.                           |when ``clone`` is used.                  |
+|                                        |                                        |                                         |
++----------------------------------------+----------------------------------------+-----------------------------------------+
 
 Examples using the LMA
 ----------------------
@@ -1305,8 +1320,8 @@ A box allocates a managed private data object, then sends it as an output field:
    {
        void *p = /* alloc */;
        
-       svp_out(cb,
-        svp_wrap_demit(cb, MYTYPE, p));
+       snet_out(cb,
+        snet_wrap_demit(cb, MYTYPE, p));
 
        /* language-specific decref(p) */
        return 0;
@@ -1326,8 +1341,8 @@ To transfer the ownership of the data object itself, use ``capture``:
    {
        void *p = /* alloc */;
        
-       svp_out(cb,
-        svp_capture_demit(cb, MYTYPE, p));
+       snet_out(cb,
+        snet_capture_demit(cb, MYTYPE, p));
 
        /* no decref(p) needed here */
        return 0;
@@ -1342,13 +1357,13 @@ private object in two successive records:
    {
        void *p = /* ... alloc ... */;
 
-       svp_out(cb,
-        svp_wrap_demit(cb, ..., p));
+       snet_out(cb,
+        snet_wrap_demit(cb, ..., p));
 
        /* ... */
 
-       svp_out(cb,
-        svp_wrap_demit(cb, ..., p));
+       snet_out(cb,
+        snet_wrap_demit(cb, ..., p));
 
        /* language-specific decref(p) */
 
@@ -1369,14 +1384,16 @@ A box receives a data object on input, and wants to drop the field reference as 
    int boxfunc(dispatch_t* cb)
    {
        fieldref_t r;
-       svp_bind(cb, svp_claim(cb, &r));
-       void *p = svp_unwrap_release(r);
+       snet_bind(cb, snet_claim(cb, &r));
+
+       void *p;
+       snet_unwrap_release(cb, r, &p);
 
        /* ... use p ... */
        
        /* language-specific decref(p) */ 
       
-       return svp_out(cb, (tagval_t)123);
+       return snet_out(cb, (tagval_t)123);
    }
 
 In this example, the function first claims ownership of the field
@@ -1525,19 +1542,19 @@ The APIs proposed above are similar to C4SNet in the following fashion:
 
 .. code:: c
 
-   #define C4SNetOut svp_out
+   #define C4SNetOut snet_out
 
    #define C4SNetCreate(hnd, type, size, data) \
-       ((c4snet_data_t*)(void*)svp_wrap(hnd, type, data))
+       ((c4snet_data_t*)(void*)snet_wrap(hnd, type, data))
    
    #define C4SNetFree(hnd, ptr) \
-       svp_release(hnd, (fieldref_t)(void*)(ptr))
+       snet_release(hnd, (fieldref_t)(void*)(ptr))
    
    static inline 
    c4snet_data_t* C4SNetAlloc(dispatch_t* hnd, c4snet_type_t type, size_t size, void **data)
    {
-       fieldref_t r = svp_new(hnd, size, type);
-       svp_access(hnd, r, data);
+       fieldref_t r = snet_new(hnd, size, type);
+       snet_access(hnd, r, data);
        return (c4snet_data_t*)(void*)r;
    }
    
@@ -1545,7 +1562,7 @@ The APIs proposed above are similar to C4SNet in the following fashion:
    size_t C4SNetSizeof(dispatch_t* hnd, c4snet_data_t* ptr)
    {
        size_t v;
-       svp_getmd(hnd, (fieldref_t)(void*)(ptr), &v, 0, 0);
+       snet_getmd(hnd, (fieldref_t)(void*)(ptr), &v, 0, 0);
        return v;
    }
    
@@ -1553,7 +1570,7 @@ The APIs proposed above are similar to C4SNet in the following fashion:
    void* C4SNetGetData(dispatch_t* hnd, c4snet_data_t* ptr)
    {
        void *v;
-       svp_access(hnd, (fieldref_t)(void*)(ptr), &v);
+       snet_access(hnd, (fieldref_t)(void*)(ptr), &v);
        return v;
    }
 
@@ -1568,7 +1585,7 @@ function learns "where" it was called from from its 1st argument.
 Changes needed to existing application code
 -------------------------------------------
 
-The new ``svp_*`` macros should be used, or alternatively the existing
+The new ``snet_*`` macros should be used, or alternatively the existing
 ``C4SNet*`` calls should be adapted to provide the ``hnd`` as first
 argument. Also, the box code should be checked with regards to field
 ownership, to ensure that field objects are not released more or less
