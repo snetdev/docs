@@ -25,27 +25,22 @@ With regards to S-Net the SaC code has to be compiled into shared libraries (usi
 and if the parallel execution is desired the LPEL multithreading backend must be used.
 
 SaC system initialisation
---------------------------
+-------------------------
 
 .. code:: c
 
   /* All the declarations are in sacinterface.h */
   #include "sacinterface.h"
 
-  void SAC_InitRuntimeSystem ( int argc, char *argv[],
-                               unsigned int num_threads);
+  void SAC_InitRuntimeSystem (void);
   void SAC_FreeRuntimeSystem (void);
 
 The init/free functions are supposed to be called when initialising/finalising the S-Net environment.
-The init function sets up shared global variables used by any SaC function.
-The num_threads parameter specifies the maximal limit on the number of threads visible to SaC.
-This is used to size the internal data structures appropriately.
-The argc/argv parameters are optional; if given they should correspond to the parameters of the main() function.
-In that case the ``*argv[]`` string is searched for the "-mt <nthreads>" parameter to determine the number of threads.
+The init function sets up shared global variables used by all SaC-generated functions.
 
 
 Compute bee-hives
-----------------------
+-----------------
 
 By a '*bee-hive*' we mean a collection of compute processors (*bees*) allocated for SaC.
 A hive is materialised as a set of slave threads (in the PThreads backend) or slave LPEL tasks.
@@ -63,7 +58,7 @@ Clemens Grelck did the experiments in his paper "Shared Memory Multiprocessor Su
 
 
 Hive (de-)allocation
-~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~
 
 .. code:: c
 
@@ -84,7 +79,7 @@ The function SAC_ReleaseHive() should be used to free an unused hive.
 
 
 Attaching/detaching hives to the bees
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code:: c
 
@@ -98,10 +93,10 @@ After attaching the hive the handle ``hive`` is conceptually no longer valid.
 
 Conversely, a hive can be detached from the current bee context using the SAC_DetachHive() function.
 The handle returned by the function can be either attached to a different queen-bee, or released.
- 
+
 
 Cleaning up
-~~~~~~~~~~~~
+~~~~~~~~~~~
 
 .. code:: c
 
@@ -117,7 +112,7 @@ the cleanup code is called via the Thread Local Storage destructor facility.
 
 
 Example
-----------
+-------
 
 A naive pseudo-code example of an S-Net task wrapper function:
 
@@ -166,7 +161,7 @@ To summarise the example:
 
 
 LPEL extensions to support SaC
-===============================
+==============================
 
 LPEL runtime enquiry
 ---------------------
@@ -224,7 +219,7 @@ The function can be used to release the data and perform any other necessary cle
 
 
 Binary semaphores
--------------------
+-----------------
 
 Binary semaphores are used in SaC to synchronise data-parallel bees.
 
